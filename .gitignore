@@ -3,6 +3,7 @@ __pycache__/
 .venv/
 .superpowers/
 .worktrees/
+.tmp/
 outputs/
 holo_results/
 results_*channels_/
