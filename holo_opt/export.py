@@ -7,9 +7,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import matplotlib
-
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -27,6 +24,9 @@ def export_results(
     eta_history: list[list[float]] | np.ndarray,
     weights_history: list[list[float]] | np.ndarray,
     metrics: dict[str, Any],
+    diagnostics: list[dict[str, float]] | None = None,
+    loss_terms_history: list[dict[str, float]] | None = None,
+    outer_summaries: list[tuple[int, np.ndarray]] | None = None,
 ) -> Path:
     run_dir = create_run_dir(config)
     _write_config(run_dir / "config.json", config)
@@ -50,6 +50,13 @@ def export_results(
     _plot_loss_curve(run_dir / "loss_curve.png", losses)
     _plot_eta_curve(run_dir / "eta_curve.png", eta_history)
     _plot_gray_levels(run_dir / "gray_levels.png", metrics)
+    if diagnostics:
+        _write_rows_csv(run_dir / "diagnostics.csv", diagnostics)
+    if loss_terms_history:
+        _write_rows_csv(run_dir / "loss_terms.csv", loss_terms_history)
+    if outer_summaries:
+        for outer_index, outer_intensities in outer_summaries:
+            _plot_summary(run_dir / f"outer_{outer_index:03d}_summary.png", targets, outer_intensities)
 
     return run_dir
 
@@ -120,68 +127,92 @@ def _write_metrics_csv(path: Path, metrics: dict[str, Any]) -> None:
             writer.writerow([row["channel"], row["mse"], row["eta"], row["gray_level_error"], score])
 
 
+def _write_rows_csv(path: Path, rows: list[dict[str, float]]) -> None:
+    if not rows:
+        return
+    fieldnames = []
+    seen = set()
+    for row in rows:
+        for key in row:
+            if key not in seen:
+                fieldnames.append(key)
+                seen.add(key)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def _plot_summary(path: Path, targets: np.ndarray, intensities: np.ndarray) -> None:
     target_array = np.asarray(targets)
     reconstruction = normalize_per_channel(intensities)
     channels = target_array.shape[0]
     fig, axes = plt.subplots(2, channels, figsize=(max(9.0, channels * 1.5), 3.0), squeeze=False)
-    for channel in range(channels):
-        axes[0, channel].imshow(target_array[channel], cmap="gray", vmin=0.0, vmax=1.0)
-        axes[0, channel].set_title(f"T{channel + 1}")
-        axes[0, channel].axis("off")
-        axes[1, channel].imshow(reconstruction[channel], cmap="gray", vmin=0.0, vmax=1.0)
-        axes[1, channel].set_title(f"R{channel + 1}")
-        axes[1, channel].axis("off")
-    fig.tight_layout()
-    fig.savefig(path, dpi=150)
-    plt.close(fig)
+    try:
+        for channel in range(channels):
+            axes[0, channel].imshow(target_array[channel], cmap="gray", vmin=0.0, vmax=1.0)
+            axes[0, channel].set_title(f"T{channel + 1}")
+            axes[0, channel].axis("off")
+            axes[1, channel].imshow(reconstruction[channel], cmap="gray", vmin=0.0, vmax=1.0)
+            axes[1, channel].set_title(f"R{channel + 1}")
+            axes[1, channel].axis("off")
+        fig.tight_layout()
+        fig.savefig(path, dpi=150)
+    finally:
+        plt.close(fig)
 
 
 def _plot_loss_curve(path: Path, losses: list[float] | np.ndarray) -> None:
     fig, ax = plt.subplots(figsize=(6.0, 4.0))
-    ax.plot(np.asarray(losses, dtype=np.float32), marker="o")
-    ax.set_xlabel("Iteration")
-    ax.set_ylabel("Loss")
-    ax.grid(True, alpha=0.3)
-    fig.tight_layout()
-    fig.savefig(path, dpi=150)
-    plt.close(fig)
+    try:
+        ax.plot(np.asarray(losses, dtype=np.float32), marker="o")
+        ax.set_xlabel("Iteration")
+        ax.set_ylabel("Loss")
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        fig.savefig(path, dpi=150)
+    finally:
+        plt.close(fig)
 
 
 def _plot_eta_curve(path: Path, eta_history: list[list[float]] | np.ndarray) -> None:
     eta = np.asarray(eta_history, dtype=np.float32)
     fig, ax = plt.subplots(figsize=(6.0, 4.0))
-    if eta.ndim == 1:
-        ax.plot(eta, marker="o", label="eta")
-    elif eta.size:
-        for channel in range(eta.shape[1]):
-            ax.plot(eta[:, channel], alpha=0.5, linewidth=1.0)
-        ax.plot(np.mean(eta, axis=1), color="black", linewidth=2.0, label="mean")
-        ax.legend()
-    ax.set_xlabel("Iteration")
-    ax.set_ylabel("Eta")
-    ax.grid(True, alpha=0.3)
-    fig.tight_layout()
-    fig.savefig(path, dpi=150)
-    plt.close(fig)
+    try:
+        if eta.ndim == 1:
+            ax.plot(eta, marker="o", label="eta")
+        elif eta.size:
+            for channel in range(eta.shape[1]):
+                ax.plot(eta[:, channel], alpha=0.5, linewidth=1.0)
+            ax.plot(np.mean(eta, axis=1), color="black", linewidth=2.0, label="mean")
+            ax.legend()
+        ax.set_xlabel("Iteration")
+        ax.set_ylabel("Eta")
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        fig.savefig(path, dpi=150)
+    finally:
+        plt.close(fig)
 
 
 def _plot_gray_levels(path: Path, metrics: dict[str, Any]) -> None:
     rows = metrics["rows"]
     fig, ax = plt.subplots(figsize=(6.0, 4.0))
-    gray_means = [row.get("gray_means") for row in rows if row.get("gray_means") is not None]
-    if gray_means:
-        for index, means in enumerate(gray_means, start=1):
-            ax.plot(means, alpha=0.5, linewidth=1.0, label=f"ch {index}")
-        ax.set_xlabel("Gray level")
-        ax.set_ylabel("Mean reconstruction")
-    else:
-        channels = [row["channel"] for row in rows]
-        errors = [row["gray_level_error"] for row in rows]
-        ax.bar(channels, errors)
-        ax.set_xlabel("Channel")
-        ax.set_ylabel("Gray level error")
-    ax.grid(True, alpha=0.3)
-    fig.tight_layout()
-    fig.savefig(path, dpi=150)
-    plt.close(fig)
+    try:
+        gray_means = [row.get("gray_means") for row in rows if row.get("gray_means") is not None]
+        if gray_means:
+            for index, means in enumerate(gray_means, start=1):
+                ax.plot(means, alpha=0.5, linewidth=1.0, label=f"ch {index}")
+            ax.set_xlabel("Gray level")
+            ax.set_ylabel("Mean reconstruction")
+        else:
+            channels = [row["channel"] for row in rows]
+            errors = [row["gray_level_error"] for row in rows]
+            ax.bar(channels, errors)
+            ax.set_xlabel("Channel")
+            ax.set_ylabel("Gray level error")
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        fig.savefig(path, dpi=150)
+    finally:
+        plt.close(fig)

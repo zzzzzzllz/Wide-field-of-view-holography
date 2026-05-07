@@ -1,9 +1,11 @@
 import csv
+import importlib
 import json
 import shutil
 import uuid
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 
@@ -12,6 +14,14 @@ from holo_opt.export import export_results
 
 
 class ExportResultsTest(unittest.TestCase):
+    def test_export_module_does_not_force_matplotlib_backend_on_import(self):
+        import holo_opt.export as export_module
+
+        with mock.patch("matplotlib.use") as use_mock:
+            importlib.reload(export_module)
+
+        use_mock.assert_not_called()
+
     def test_export_results_writes_required_artifacts(self):
         tmp_path = Path.cwd() / "outputs" / "test_export" / uuid.uuid4().hex
         tmp_path.mkdir(parents=True)
@@ -141,6 +151,122 @@ class ExportResultsTest(unittest.TestCase):
 
             self.assertEqual(run_dir.parent, Path(tmp))
             self.assertTrue(run_dir.name.startswith("bad_name_9ch_2_"))
+        finally:
+            shutil.rmtree(tmp_path, ignore_errors=True)
+
+    def test_export_results_writes_diagnostics_when_provided(self):
+        tmp_path = Path.cwd() / "outputs" / "test_export" / uuid.uuid4().hex
+        tmp_path.mkdir(parents=True)
+        self.addCleanup(lambda: shutil.rmtree(tmp_path, ignore_errors=True))
+        tmp = str(tmp_path)
+        try:
+            config = ExperimentConfig(size=4, output_root=tmp, label="diag")
+            targets = np.ones((9, 4, 4), dtype=np.float32)
+            intensities = np.ones((9, 4, 4), dtype=np.float32)
+            phdx = np.zeros((4, 4), dtype=np.float32)
+            phdy = np.zeros((4, 4), dtype=np.float32)
+            metrics = {
+                "rows": [
+                    {
+                        "channel": index + 1,
+                        "mse": 0.1,
+                        "eta": 0.5,
+                        "gray_level_error": 0.2,
+                        "gray_means": [0.0] * 16,
+                    }
+                    for index in range(9)
+                ],
+                "summary": {
+                    "score": 1.0,
+                    "image_error": 0.1,
+                    "gray_level_error": 0.2,
+                    "efficiency_balance_penalty": 0.3,
+                    "mean_eta": 0.5,
+                },
+            }
+            diagnostics = [
+                {
+                    "outer": 1,
+                    "loss": 2.0,
+                    "score": 1.0,
+                    "mean_eta": 0.5,
+                    "eta_balance": 0.3,
+                    "image_error": 0.1,
+                    "gray_level_error": 0.2,
+                    "weight_min": 1.0,
+                    "weight_max": 1.0,
+                },
+                {
+                    "outer": 2,
+                    "loss": 1.5,
+                    "score": 1.2,
+                    "mean_eta": 0.6,
+                    "eta_balance": 0.2,
+                    "image_error": 0.08,
+                    "gray_level_error": 0.15,
+                    "weight_min": 0.9,
+                    "weight_max": 1.1,
+                    "extra_term": 0.25,
+                }
+            ]
+            loss_terms_history = [
+                {
+                    "step": 1,
+                    "total": 2.0,
+                    "image_mse": 1.0,
+                    "eta_balance": 0.2,
+                    "gray_monotonic": 0.3,
+                    "phase_smoothness": 0.4,
+                    "background": 0.0,
+                }
+            ]
+
+            run_dir = export_results(
+                config,
+                targets,
+                intensities,
+                phdx,
+                phdy,
+                [2.0],
+                [[0.5] * 9],
+                [[1.0] * 9],
+                metrics,
+                diagnostics=diagnostics,
+                loss_terms_history=loss_terms_history,
+                outer_summaries=[(1, intensities)],
+            )
+
+            with (run_dir / "diagnostics.csv").open(newline="", encoding="utf-8") as handle:
+                diagnostics_rows = list(csv.reader(handle))
+            self.assertEqual(
+                diagnostics_rows[0],
+                [
+                    "outer",
+                    "loss",
+                    "score",
+                    "mean_eta",
+                    "eta_balance",
+                    "image_error",
+                    "gray_level_error",
+                    "weight_min",
+                    "weight_max",
+                    "extra_term",
+                ],
+            )
+            self.assertEqual(diagnostics_rows[1], ["1", "2.0", "1.0", "0.5", "0.3", "0.1", "0.2", "1.0", "1.0", ""])
+            self.assertEqual(
+                diagnostics_rows[2],
+                ["2", "1.5", "1.2", "0.6", "0.2", "0.08", "0.15", "0.9", "1.1", "0.25"],
+            )
+
+            with (run_dir / "loss_terms.csv").open(newline="", encoding="utf-8") as handle:
+                loss_terms_rows = list(csv.reader(handle))
+            self.assertEqual(
+                loss_terms_rows[0],
+                ["step", "total", "image_mse", "eta_balance", "gray_monotonic", "phase_smoothness", "background"],
+            )
+            self.assertEqual(loss_terms_rows[1], ["1", "2.0", "1.0", "0.2", "0.3", "0.4", "0.0"])
+            self.assertGreater((run_dir / "outer_001_summary.png").stat().st_size, 0)
         finally:
             shutil.rmtree(tmp_path, ignore_errors=True)
 
