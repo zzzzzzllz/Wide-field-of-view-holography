@@ -1,3 +1,4 @@
+import csv
 import shutil
 import uuid
 import unittest
@@ -7,7 +8,7 @@ import numpy as np
 import torch
 
 from holo_opt.config import ExperimentConfig, ScoreConfig
-from holo_opt.runner import compute_score, load_targets_for_config, resolve_device, run_experiment
+from holo_opt.runner import compute_score, load_targets_for_config, loss_config_to_dict, resolve_device, run_experiment
 
 
 class RunnerTest(unittest.TestCase):
@@ -35,6 +36,20 @@ class RunnerTest(unittest.TestCase):
         )
 
         self.assertAlmostEqual(compute_score(summary, score_config), 10.3)
+
+    def test_loss_config_to_dict_exposes_training_weights(self):
+        config = ExperimentConfig()
+
+        self.assertEqual(
+            loss_config_to_dict(config),
+            {
+                "image_weight": 1.0,
+                "eta_balance_weight": 0.05,
+                "gray_monotonic_weight": 0.1,
+                "phase_smoothness_weight": 1e-4,
+                "background_weight": 0.0,
+            },
+        )
 
     def test_run_experiment_smoke_exports_results(self):
         output_root = Path.cwd() / "outputs" / "test_runner" / uuid.uuid4().hex
@@ -70,6 +85,54 @@ class RunnerTest(unittest.TestCase):
             "phdy.csv",
         ):
             self.assertTrue((result.run_dir / name).exists(), name)
+
+    def test_run_experiment_exports_diagnostics(self):
+        output_root = Path.cwd() / "outputs" / "test_runner" / uuid.uuid4().hex
+        output_root.mkdir(parents=True)
+        self.addCleanup(lambda: shutil.rmtree(output_root, ignore_errors=True))
+
+        config = ExperimentConfig(
+            size=8,
+            epochs_per_chunk=1,
+            outer_loops=1,
+            output_root=str(output_root),
+            label="diag",
+            device="cpu",
+        )
+
+        result = run_experiment(config)
+
+        self.assertTrue((result.run_dir / "diagnostics.csv").exists())
+        self.assertTrue((result.run_dir / "loss_terms.csv").exists())
+        self.assertTrue((result.run_dir / "outer_001_summary.png").exists())
+
+    def test_run_experiment_diagnostics_record_rows_and_interval(self):
+        output_root = Path.cwd() / "outputs" / "test_runner" / uuid.uuid4().hex
+        output_root.mkdir(parents=True)
+        self.addCleanup(lambda: shutil.rmtree(output_root, ignore_errors=True))
+
+        config = ExperimentConfig(
+            size=8,
+            epochs_per_chunk=2,
+            outer_loops=2,
+            diagnostic_interval=2,
+            output_root=str(output_root),
+            label="diag_interval",
+            device="cpu",
+        )
+
+        result = run_experiment(config)
+
+        with (result.run_dir / "diagnostics.csv").open(newline="", encoding="utf-8") as handle:
+            diagnostics_rows = list(csv.DictReader(handle))
+        self.assertEqual(len(diagnostics_rows), 2)
+        self.assertEqual(diagnostics_rows[0]["outer"], "1.0")
+        self.assertEqual(diagnostics_rows[1]["outer"], "2.0")
+        with (result.run_dir / "loss_terms.csv").open(newline="", encoding="utf-8") as handle:
+            loss_rows = list(csv.DictReader(handle))
+        self.assertEqual(len(loss_rows), 4)
+        self.assertFalse((result.run_dir / "outer_001_summary.png").exists())
+        self.assertTrue((result.run_dir / "outer_002_summary.png").exists())
 
 
 if __name__ == "__main__":

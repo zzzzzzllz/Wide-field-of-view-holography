@@ -9,7 +9,7 @@ import torch
 
 from holo_opt.config import ExperimentConfig, ScoreConfig, validate_config
 from holo_opt.export import export_results
-from holo_opt.field import compute_intensities, training_loss
+from holo_opt.field import compute_intensities, compute_loss_terms
 from holo_opt.metrics import evaluate_metrics
 from holo_opt.targets import generate_gray_step_targets, load_mat_targets, validate_targets
 from holo_opt.weights import update_weights
@@ -61,6 +61,16 @@ def apply_score_config(metrics: dict[str, object], score_config: ScoreConfig) ->
     return metrics
 
 
+def loss_config_to_dict(config: ExperimentConfig) -> dict[str, float]:
+    return {
+        "image_weight": config.loss.image_weight,
+        "eta_balance_weight": config.loss.eta_balance_weight,
+        "gray_monotonic_weight": config.loss.gray_monotonic_weight,
+        "phase_smoothness_weight": config.loss.phase_smoothness_weight,
+        "background_weight": config.loss.background_weight,
+    }
+
+
 def run_experiment(config: ExperimentConfig) -> ExperimentResult:
     validate_config(config)
     device = resolve_device(config.device)
@@ -91,20 +101,34 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
     optimizer = torch.optim.Adam([phdx, phdy], lr=config.lr)
 
     losses: list[float] = []
+    loss_terms_history: list[dict[str, float]] = []
     eta_history: list[list[float]] = []
     weights_history: list[list[float]] = [weights_np.astype(float).tolist()]
+    diagnostics: list[dict[str, float]] = []
+    outer_summaries: list[tuple[int, np.ndarray]] = []
     best_score = float("inf")
     best_state: dict[str, Any] | None = None
 
     for _outer_index in range(config.outer_loops):
         for _epoch_index in range(config.epochs_per_chunk):
             optimizer.zero_grad()
-            loss = training_loss(phdx, phdy, pair_mat, targets, weights)
+            terms = compute_loss_terms(phdx, phdy, pair_mat, targets, weights, loss_config_to_dict(config))
+            loss = terms["total"]
             if not torch.isfinite(loss).item():
                 raise RuntimeError("non-finite loss encountered")
             loss.backward()
             optimizer.step()
-            losses.append(float(loss.detach().cpu().item()))
+            loss_value = float(loss.detach().cpu().item())
+            losses.append(loss_value)
+            loss_terms_history.append({
+                "step": float(len(losses)),
+                "total": loss_value,
+                "image_mse": float(terms["image_mse"].detach().cpu().item()),
+                "eta_balance": float(terms["eta_balance"].detach().cpu().item()),
+                "gray_monotonic": float(terms["gray_monotonic"].detach().cpu().item()),
+                "phase_smoothness": float(terms["phase_smoothness"].detach().cpu().item()),
+                "background": float(terms["background"].detach().cpu().item()),
+            })
 
         with torch.no_grad():
             intensities_np = compute_intensities(phdx, phdy, pair_mat).detach().cpu().numpy().astype(np.float32)
@@ -112,6 +136,21 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
             raise RuntimeError("non-finite intensities encountered")
         metrics = apply_score_config(evaluate_metrics(intensities_np, targets_np), config.score)
         score = float(metrics["summary"]["score"])  # type: ignore[index]
+        outer_number = _outer_index + 1
+        summary = metrics["summary"]  # type: ignore[assignment]
+        diagnostics.append({
+            "outer": float(outer_number),
+            "loss": losses[-1],
+            "score": score,
+            "mean_eta": float(summary["mean_eta"]),  # type: ignore[index]
+            "eta_balance": float(summary["efficiency_balance_penalty"]),  # type: ignore[index]
+            "image_error": float(summary["image_error"]),  # type: ignore[index]
+            "gray_level_error": float(summary["gray_level_error"]),  # type: ignore[index]
+            "weight_min": float(np.min(weights_np)),
+            "weight_max": float(np.max(weights_np)),
+        })
+        if outer_number % config.diagnostic_interval == 0:
+            outer_summaries.append((outer_number, intensities_np.copy()))
         if np.isfinite(score) and score < best_score:
             best_score = score
             best_state = {
@@ -153,6 +192,9 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
         eta_history,
         weights_history,
         best_state["metrics"],
+        diagnostics=diagnostics,
+        loss_terms_history=loss_terms_history,
+        outer_summaries=outer_summaries,
     )
     return ExperimentResult(
         run_dir=run_dir,
