@@ -73,6 +73,30 @@ class CliTest(unittest.TestCase):
         self.assertEqual(config.weight_update.alpha, 0.25)
         self.assertEqual(config.weight_update.beta, 0.75)
 
+    def test_parser_exposes_loss_weight_options(self):
+        args = build_parser().parse_args(
+            [
+                "--eta-balance-weight",
+                "0.2",
+                "--gray-monotonic-weight",
+                "0.3",
+                "--phase-smoothness-weight",
+                "0.004",
+                "--background-weight",
+                "0.1",
+                "--diagnostic-interval",
+                "2",
+            ]
+        )
+
+        config = config_from_args(args)
+
+        self.assertEqual(config.loss.eta_balance_weight, 0.2)
+        self.assertEqual(config.loss.gray_monotonic_weight, 0.3)
+        self.assertEqual(config.loss.phase_smoothness_weight, 0.004)
+        self.assertEqual(config.loss.background_weight, 0.1)
+        self.assertEqual(config.diagnostic_interval, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

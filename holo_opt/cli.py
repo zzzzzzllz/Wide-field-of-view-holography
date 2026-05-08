@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from holo_opt.config import (
     ExperimentConfig,
     GuidedModeConfig,
+    LossConfig,
     PhysicalConfig,
     WeightUpdateConfig,
 )
@@ -26,6 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
     parser.add_argument("--output-root", default="outputs/holo_experiments")
     parser.add_argument("--label", default="quick9")
+    parser.add_argument("--diagnostic-interval", type=int, default=1)
     parser.add_argument("--lambda-nm", type=float, default=532.0)
     parser.add_argument("--px-nm", type=float, default=830.0)
     parser.add_argument("--py-nm", type=float, default=830.0)
@@ -35,6 +37,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--alpha-deg", type=float, default=-16.7)
     parser.add_argument("--weight-alpha", type=float, default=0.5)
     parser.add_argument("--weight-beta", type=float, default=0.5)
+    parser.add_argument("--eta-balance-weight", type=float, default=0.05)
+    parser.add_argument("--gray-monotonic-weight", type=float, default=0.1)
+    parser.add_argument("--phase-smoothness-weight", type=float, default=1e-4)
+    parser.add_argument("--background-weight", type=float, default=0.0)
     return parser
 
 
@@ -51,6 +57,7 @@ def config_from_args(args: argparse.Namespace) -> ExperimentConfig:
         mat_variable=args.mat_variable,
         output_root=args.output_root,
         label=args.label,
+        diagnostic_interval=args.diagnostic_interval,
         physical=PhysicalConfig(
             lambda_nm=args.lambda_nm,
             px_nm=args.px_nm,
@@ -64,6 +71,12 @@ def config_from_args(args: argparse.Namespace) -> ExperimentConfig:
         weight_update=WeightUpdateConfig(
             alpha=args.weight_alpha,
             beta=args.weight_beta,
+        ),
+        loss=LossConfig(
+            eta_balance_weight=args.eta_balance_weight,
+            gray_monotonic_weight=args.gray_monotonic_weight,
+            phase_smoothness_weight=args.phase_smoothness_weight,
+            background_weight=args.background_weight,
         ),
     )
 
