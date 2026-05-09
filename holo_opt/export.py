@@ -30,6 +30,7 @@ def export_results(
     loss_terms_history: list[dict[str, float]] | None = None,
     outer_summaries: list[tuple[int, np.ndarray]] | None = None,
 ) -> Path:
+    """Write one complete experiment folder containing images, tables, and raw arrays."""
     run_dir = create_run_dir(config)
     _write_config(run_dir / "config.json", config)
     _write_json(run_dir / "metrics.json", metrics)
