@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+.superpowers/
+.worktrees/
+.tmp/
+outputs/
+holo_results/
+results_*channels_/
+*.zip
+*.rar
