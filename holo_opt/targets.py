@@ -1,3 +1,5 @@
+"""Target generation and MAT-file loading for multi-channel far-field objectives."""
+
 from __future__ import annotations
 
 from pathlib import Path

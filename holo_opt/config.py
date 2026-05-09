@@ -1,3 +1,5 @@
+"""Configuration models and validation rules for the holography pipeline."""
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field

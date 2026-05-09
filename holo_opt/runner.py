@@ -1,3 +1,5 @@
+"""Main experiment loop that optimizes phase maps and records diagnostics."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

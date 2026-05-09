@@ -1,3 +1,5 @@
+"""FFT-based field simulation and differentiable loss terms for image optimization."""
+
 from __future__ import annotations
 
 import torch

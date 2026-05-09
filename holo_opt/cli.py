@@ -1,3 +1,5 @@
+"""Command-line entrypoint for configuring and launching a holography run."""
+
 from __future__ import annotations
 
 import argparse
