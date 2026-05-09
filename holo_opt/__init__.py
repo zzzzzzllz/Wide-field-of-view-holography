@@ -5,6 +5,7 @@ Recommended way to read this package:
 1. Target-image preparation
    - ``config.py``: run configuration, default channel orders, validation.
    - ``targets.py``: standard grayscale targets and MAT target loading.
+   - ``line_targets.py``: RGB-image to line-art grayscale target generation.
 
 2. On-chip structure proxy optimization
    - ``field.py``: FFT-based far-field simulation and differentiable loss terms.

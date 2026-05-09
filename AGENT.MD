@@ -28,9 +28,27 @@
 - `holo_opt/export.py`：导出运行目录、CSV/JSON/NPZ 数据以及 PNG 可视化图。
 - `holo_opt/metrics.py`：重建质量、效率、灰度级误差等评估指标。
 - `holo_opt/targets.py`：标准灰度阶梯目标和 `.mat` 目标加载。
+- `holo_opt/line_targets.py`：从普通 RGB 图片生成黑底线稿灰度目标图，并重复为多通道 target 栈。
+- `holo_opt/lineart_preview.py`：只做线稿预览，不启动优化；输入一张 RGB 图片，导出原图副本和处理后的线稿图。
 - `holo_opt/weights.py`：基于效率和通道误差的通道权重更新。
 - `tests/`：使用 `unittest` 编写的单元测试和导出/运行烟雾测试。
 - `.vscode/launch.json`：VS Code 调试入口，适合不想手写命令时使用。
+
+建议按下面 3 个部分理解和维护这套代码：
+
+1. 目标图像生成与输入准备
+   - `config.py`：定义这次实验的 target 模式、尺寸、通道数和输出路径。
+   - `targets.py`：生成标准灰度阶梯 target，或从 `.mat` 文件读取 target 栈。
+   - `line_targets.py`：从一张 RGB 图片自动提线，生成黑底白线、线中心更亮的灰度 target 图，再复制为多通道 target 栈。
+   - `lineart_preview.py`：给第一部分单独预览用，先验证“取线条效果”再进入优化。
+   - `cli.py`：把命令行参数装配成统一配置对象。
+2. 片上结构代理优化与远场模拟
+   - `field.py`：使用 `phdx`、`phdy` 和级次对每个通道做 FFT 远场模拟，并计算损失项。
+   - `weights.py`：根据各通道误差和效率做动态重加权。
+   - `runner.py`：串起 target 加载、参数初始化、优化循环、诊断记录和最优状态选择。
+3. 评估、导出与结果管理
+   - `metrics.py`：计算每个通道和整体的图像误差、灰度误差、效率和 score。
+   - `export.py`：把图、表、配置和相位结果写到 `outputs/holo_experiments/`。
 
 ## 协作与平台约定
 
@@ -73,6 +91,7 @@
 
 - 已落地能力：
   - `LossConfig` 和 `diagnostic_interval` 已进入配置层。
+  - target 侧已支持 3 种输入模式：`standard`、`mat`、`lineart`。
   - `field.py` 已支持结构化损失项：`image_mse`、`eta_balance`、`gray_monotonic`、`phase_smoothness`、`background`。
   - `runner.py` 已记录 `loss_terms_history`、`diagnostics`、`outer_summaries`，并按 score 选最优状态。
   - `export.py` 已导出 `diagnostics.csv`、`loss_terms.csv`、`loss_terms.png`、`outer_###_summary.png`。
@@ -97,6 +116,7 @@
 - `Holo quick9: standard 128`：较快的标准 9 通道运行。
 - `Holo quality: standard 128`：更长步数的质量优先配置，当前使用 `cuda`，没有 CUDA 时需要改成 `cpu` 或改用其他配置。
 - `Holo MAT template`：读取用户自己的 `.mat` 目标图，需要先把 `--target-path` 改成真实路径。
+- `lineart` 模式：读取一张普通 RGB 图片，自动生成黑底线稿灰度 target 图，适合从轮廓图开始做远场结构优化。
 
 常用命令行命令：
 
@@ -115,6 +135,25 @@ MAT 目标运行示例：
 ```powershell
 py -m holo_opt.cli --target-mode mat --target-path D:/path/to/targets.mat --mat-variable bw_all --size 128 --device cpu --output-root outputs/holo_experiments --label mat9
 ```
+
+RGB 线稿目标运行示例：
+
+```powershell
+py -m holo_opt.cli --target-mode lineart --target-path D:/path/to/input.png --size 128 --device cpu --output-root outputs/holo_experiments --label lineart
+```
+
+线稿预览运行示例：
+
+```powershell
+py -m holo_opt.lineart_preview --input demo.png --size 256
+```
+
+线稿预览与正式优化的路径约定：
+
+- 建议把原始图片放到 `inputs/lineart_sources/`
+- `py -m holo_opt.lineart_preview --input demo.png` 会优先在 `inputs/lineart_sources/demo.png` 查找输入图
+- 预览模式默认把两张图写到 `outputs/lineart_preview/`
+- 正式 `lineart` 优化模式把实验结果写到 `outputs/holo_experiments/`
 
 当前本机 `py` 可导入 `torch`。普通 `python` 可能是 Microsoft Store 占位入口，运行项目和测试时优先使用 `py`。
 

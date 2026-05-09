@@ -133,10 +133,10 @@ def validate_config(config: ExperimentConfig) -> None:
             raise ValueError("each pair_mat row must contain two integers")
         if not all(type(value) is int for value in row):
             raise ValueError("pair_mat values must be integers")
-    if config.target_mode not in {"standard", "mat"}:
-        raise ValueError("target_mode must be standard or mat")
-    if config.target_mode == "mat" and not config.target_path:
-        raise ValueError("target_path is required when target_mode is mat")
+    if config.target_mode not in {"standard", "mat", "lineart"}:
+        raise ValueError("target_mode must be standard, mat, or lineart")
+    if config.target_mode in {"mat", "lineart"} and not config.target_path:
+        raise ValueError("target_path is required when target_mode is mat or lineart")
     if not _all_positive([config.physical.lambda_nm, config.physical.px_nm, config.physical.py_nm]):
         raise ValueError("physical values must be positive and finite")
     if not _all_positive([config.guided_mode.neff]):

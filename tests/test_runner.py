@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from PIL import Image, ImageDraw
 
 import holo_opt.runner as runner
 from holo_opt.config import ExperimentConfig, ScoreConfig
@@ -30,6 +31,23 @@ class RunnerTest(unittest.TestCase):
         targets = load_targets_for_config(config)
         self.assertEqual(targets.shape, (9, 8, 8))
         self.assertEqual(targets.dtype, np.float32)
+
+    def test_load_targets_for_lineart_config_returns_valid_shape(self):
+        temp_dir = Path.cwd() / "outputs" / "test_runner" / uuid.uuid4().hex
+        temp_dir.mkdir(parents=True, exist_ok=False)
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+        image_path = temp_dir / "outline.png"
+        image = Image.new("RGB", (24, 24), color=(0, 0, 0))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((5, 5, 19, 19), outline=(255, 255, 255), width=2)
+        image.save(image_path)
+
+        config = ExperimentConfig(size=8, target_mode="lineart", target_path=str(image_path))
+        targets = load_targets_for_config(config)
+
+        self.assertEqual(targets.shape, (9, 8, 8))
+        self.assertEqual(targets.dtype, np.float32)
+        self.assertGreater(float(targets.max()), 0.0)
 
     def test_compute_score_uses_score_config_weights(self):
         summary = {
