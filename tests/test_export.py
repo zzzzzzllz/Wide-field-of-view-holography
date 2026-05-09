@@ -266,6 +266,7 @@ class ExportResultsTest(unittest.TestCase):
                 ["step", "total", "image_mse", "eta_balance", "gray_monotonic", "phase_smoothness", "background"],
             )
             self.assertEqual(loss_terms_rows[1], ["1", "2.0", "1.0", "0.2", "0.3", "0.4", "0.0"])
+            self.assertGreater((run_dir / "loss_terms.png").stat().st_size, 0)
             self.assertGreater((run_dir / "outer_001_summary.png").stat().st_size, 0)
         finally:
             shutil.rmtree(tmp_path, ignore_errors=True)

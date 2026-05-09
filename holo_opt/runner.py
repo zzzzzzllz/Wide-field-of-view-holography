@@ -15,6 +15,9 @@ from holo_opt.targets import generate_gray_step_targets, load_mat_targets, valid
 from holo_opt.weights import update_weights
 
 
+PROGRESS_INTERVAL_STEPS = 500
+
+
 @dataclass
 class ExperimentResult:
     run_dir: Path
@@ -71,6 +74,12 @@ def loss_config_to_dict(config: ExperimentConfig) -> dict[str, float]:
     }
 
 
+def format_progress_message(step: int, total_steps: int, loss_value: float) -> str | None:
+    if step % PROGRESS_INTERVAL_STEPS != 0:
+        return None
+    return f"step {step}/{total_steps} loss={loss_value:.6f}"
+
+
 def run_experiment(config: ExperimentConfig) -> ExperimentResult:
     validate_config(config)
     device = resolve_device(config.device)
@@ -108,6 +117,7 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
     outer_summaries: list[tuple[int, np.ndarray]] = []
     best_score = float("inf")
     best_state: dict[str, Any] | None = None
+    total_steps = config.outer_loops * config.epochs_per_chunk
 
     for _outer_index in range(config.outer_loops):
         for _epoch_index in range(config.epochs_per_chunk):
@@ -120,6 +130,9 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
             optimizer.step()
             loss_value = float(loss.detach().cpu().item())
             losses.append(loss_value)
+            progress_message = format_progress_message(len(losses), total_steps, loss_value)
+            if progress_message is not None:
+                print(progress_message, flush=True)
             loss_terms_history.append({
                 "step": float(len(losses)),
                 "total": loss_value,

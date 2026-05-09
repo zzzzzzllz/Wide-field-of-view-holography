@@ -54,6 +54,7 @@ def export_results(
         _write_rows_csv(run_dir / "diagnostics.csv", diagnostics)
     if loss_terms_history:
         _write_rows_csv(run_dir / "loss_terms.csv", loss_terms_history)
+        _plot_loss_terms(run_dir / "loss_terms.png", loss_terms_history)
     if outer_summaries:
         for outer_index, outer_intensities in outer_summaries:
             _plot_summary(run_dir / f"outer_{outer_index:03d}_summary.png", targets, outer_intensities)
@@ -168,6 +169,24 @@ def _plot_loss_curve(path: Path, losses: list[float] | np.ndarray) -> None:
         ax.plot(np.asarray(losses, dtype=np.float32), marker="o")
         ax.set_xlabel("Iteration")
         ax.set_ylabel("Loss")
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        fig.savefig(path, dpi=150)
+    finally:
+        plt.close(fig)
+
+
+def _plot_loss_terms(path: Path, loss_terms_history: list[dict[str, float]]) -> None:
+    terms = ("image_mse", "eta_balance", "gray_monotonic", "phase_smoothness", "background")
+    steps = np.asarray([row["step"] for row in loss_terms_history], dtype=np.float32)
+    fig, ax = plt.subplots(figsize=(7.0, 4.5))
+    try:
+        for term in terms:
+            values = np.asarray([row[term] for row in loss_terms_history], dtype=np.float32)
+            ax.plot(steps, values, linewidth=1.5, label=term)
+        ax.set_xlabel("Step")
+        ax.set_ylabel("Loss term")
+        ax.legend()
         ax.grid(True, alpha=0.3)
         fig.tight_layout()
         fig.savefig(path, dpi=150)

@@ -1,4 +1,6 @@
 import csv
+import contextlib
+import io
 import shutil
 import uuid
 import unittest
@@ -7,8 +9,16 @@ from pathlib import Path
 import numpy as np
 import torch
 
+import holo_opt.runner as runner
 from holo_opt.config import ExperimentConfig, ScoreConfig
-from holo_opt.runner import compute_score, load_targets_for_config, loss_config_to_dict, resolve_device, run_experiment
+from holo_opt.runner import (
+    compute_score,
+    format_progress_message,
+    load_targets_for_config,
+    loss_config_to_dict,
+    resolve_device,
+    run_experiment,
+)
 
 
 class RunnerTest(unittest.TestCase):
@@ -50,6 +60,13 @@ class RunnerTest(unittest.TestCase):
                 "background_weight": 0.0,
             },
         )
+
+    def test_format_progress_message_reports_every_500_steps(self):
+        self.assertEqual(
+            format_progress_message(500, 900, 0.125),
+            "step 500/900 loss=0.125000",
+        )
+        self.assertIsNone(format_progress_message(499, 900, 0.125))
 
     def test_run_experiment_smoke_exports_results(self):
         output_root = Path.cwd() / "outputs" / "test_runner" / uuid.uuid4().hex
@@ -105,6 +122,29 @@ class RunnerTest(unittest.TestCase):
         self.assertTrue((result.run_dir / "diagnostics.csv").exists())
         self.assertTrue((result.run_dir / "loss_terms.csv").exists())
         self.assertTrue((result.run_dir / "outer_001_summary.png").exists())
+
+    def test_run_experiment_prints_progress_at_interval(self):
+        output_root = Path.cwd() / "outputs" / "test_runner" / uuid.uuid4().hex
+        output_root.mkdir(parents=True)
+        self.addCleanup(lambda: shutil.rmtree(output_root, ignore_errors=True))
+        original_interval = runner.PROGRESS_INTERVAL_STEPS
+        self.addCleanup(lambda: setattr(runner, "PROGRESS_INTERVAL_STEPS", original_interval))
+        runner.PROGRESS_INTERVAL_STEPS = 2
+
+        config = ExperimentConfig(
+            size=8,
+            epochs_per_chunk=2,
+            outer_loops=1,
+            output_root=str(output_root),
+            label="progress",
+            device="cpu",
+        )
+        output = io.StringIO()
+
+        with contextlib.redirect_stdout(output):
+            run_experiment(config)
+
+        self.assertIn("step 2/2 loss=", output.getvalue())
 
     def test_run_experiment_diagnostics_record_rows_and_interval(self):
         output_root = Path.cwd() / "outputs" / "test_runner" / uuid.uuid4().hex
