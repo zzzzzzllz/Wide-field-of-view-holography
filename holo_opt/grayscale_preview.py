@@ -47,26 +47,59 @@ def _array_to_image(array: np.ndarray) -> Image.Image:
     return Image.fromarray(np.uint8(np.clip(array, 0.0, 1.0) * 255.0), mode="L")
 
 
+def _format_summary_lines(name: str, report: dict[str, object]) -> list[str]:
+    processed = report["processed"]  # type: ignore[index]
+    tile_budget = report["tile_budget"]  # type: ignore[index]
+    if not isinstance(processed, dict) or not isinstance(tile_budget, dict):
+        raise ValueError("preview report fields must be dictionaries")
+    if name == "source grayscale":
+        return [
+            f"mean {float(processed['mean_intensity']):.3f}",
+            f"peak {float(processed['peak_intensity']):.3f}",
+            f"edge {float(processed['edge_density']):.3f}",
+        ]
+    return [
+        f"mean {float(processed['mean_intensity']):.3f}",
+        f"peak {float(processed['peak_intensity']):.3f}",
+        f"budget {float(tile_budget['budget_scale_min']):.2f}-{float(tile_budget['budget_scale_max']):.2f}",
+    ]
+
+
 def _make_comparison_panel(
     original_rgb: Image.Image,
     source_grayscale: Image.Image,
-    processed_images: list[tuple[str, Image.Image]],
+    source_report: dict[str, object],
+    processed_images: list[tuple[str, Image.Image, dict[str, object]]],
 ) -> Image.Image:
-    labels = ["source RGB", "source grayscale", *[f"{name} processed" for name, _ in processed_images]]
-    panel_images = [original_rgb.convert("RGB"), source_grayscale.convert("RGB"), *[image.convert("RGB") for _, image in processed_images]]
+    labels = ["source RGB", "source grayscale", *[f"{name} processed" for name, _, _ in processed_images]]
+    panel_images = [
+        original_rgb.convert("RGB"),
+        source_grayscale.convert("RGB"),
+        *[image.convert("RGB") for _, image, _ in processed_images],
+    ]
+    summary_lines = [
+        ["original image", "", ""],
+        _format_summary_lines("source grayscale", source_report),
+        *[_format_summary_lines(name, report) for name, _, report in processed_images],
+    ]
     width, height = panel_images[0].size
     margin = 12
     col_gap = 8
     header_height = 28
+    footer_height = 42
     canvas_width = margin * 2 + len(panel_images) * width + (len(panel_images) - 1) * col_gap
-    canvas_height = margin * 2 + header_height + height
+    canvas_height = margin * 2 + header_height + height + footer_height
     canvas = Image.new("RGB", (canvas_width, canvas_height), color=(248, 248, 246))
     draw = ImageDraw.Draw(canvas)
-    for index, (label, image) in enumerate(zip(labels, panel_images, strict=False)):
+    for index, (label, image, lines) in enumerate(zip(labels, panel_images, summary_lines, strict=False)):
         x = margin + index * (width + col_gap)
         canvas.paste(image, (x, margin + header_height))
         draw.text((x + 4, margin), label, fill=(24, 24, 24))
         draw.rectangle((x, margin + header_height, x + width - 1, margin + header_height + height - 1), outline=(90, 90, 90), width=1)
+        text_y = margin + header_height + height + 6
+        for line in lines:
+            draw.text((x + 4, text_y), line, fill=(72, 72, 72))
+            text_y += 12
     return canvas
 
 
@@ -88,6 +121,26 @@ def _report_for_artifacts(artifacts: object) -> dict[str, object]:
             "budget_scale_max": max(tile_scales) if tile_scales else 0.0,
         },
     }
+
+
+def _recommend_preset(report: dict[str, object]) -> str:
+    preset_reports = report.get("presets")
+    if not isinstance(preset_reports, dict) or not preset_reports:
+        return "balanced"
+    balanced_report = preset_reports.get("balanced")
+    if not isinstance(balanced_report, dict):
+        return "balanced"
+    source = balanced_report.get("source")
+    if not isinstance(source, dict):
+        return "balanced"
+    edge_density = float(source.get("edge_density", 0.0))
+    flat_ratio = float(source.get("flat_region_ratio", 0.0))
+    peak_intensity = float(source.get("peak_intensity", 0.0))
+    if edge_density >= 0.2 and flat_ratio <= 0.5:
+        return "detail"
+    if flat_ratio >= 0.5 or peak_intensity >= 0.95:
+        return "budget"
+    return "balanced"
 
 
 def generate_grayscale_preview(
@@ -119,7 +172,7 @@ def generate_grayscale_preview(
     with Image.open(resolved_input) as source:
         square_rgb = ImageOps.pad(source.convert("RGB"), (size, size), color=(0, 0, 0))
     processed_outputs: list[Path] = []
-    processed_images: list[tuple[str, Image.Image]] = []
+    processed_images: list[tuple[str, Image.Image, dict[str, object]]] = []
     report: dict[str, object] = {
         "input": str(resolved_input),
         "size": size,
@@ -127,6 +180,7 @@ def generate_grayscale_preview(
     }
 
     source_preview: Image.Image | None = None
+    source_report: dict[str, object] | None = None
     for preset_name in presets:
         artifacts = generate_grayscale_target_artifacts(
             resolved_input,
@@ -137,15 +191,18 @@ def generate_grayscale_preview(
         source_image = _array_to_image(artifacts.source_grayscale)
         processed_image = _array_to_image(artifacts.processed_grayscale)
         source_preview = source_image
+        preset_report = _report_for_artifacts(artifacts)
+        source_report = preset_report
         processed_image.save(processed_output)
         processed_outputs.append(processed_output)
-        processed_images.append((preset_name, processed_image))
-        report["presets"][preset_name] = _report_for_artifacts(artifacts)  # type: ignore[index]
+        processed_images.append((preset_name, processed_image, preset_report))
+        report["presets"][preset_name] = preset_report  # type: ignore[index]
 
-    if source_preview is None:
+    if source_preview is None or source_report is None:
         raise RuntimeError("source preview was not generated")
+    report["recommended_preset"] = _recommend_preset(report)
     source_preview.save(source_output)
-    comparison = _make_comparison_panel(square_rgb, source_preview, processed_images)
+    comparison = _make_comparison_panel(square_rgb, source_preview, source_report, processed_images)
     comparison.save(comparison_output)
     report_output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 

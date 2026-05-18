@@ -49,6 +49,7 @@ class GrayscalePreviewTest(unittest.TestCase):
         report = json.loads(report_output.read_text(encoding="utf-8"))
         self.assertEqual(report["size"], 32)
         self.assertIn("balanced", report["presets"])
+        self.assertIn("recommended_preset", report)
 
     def test_generate_grayscale_preview_supports_multiple_presets(self):
         input_path, output_dir = self._make_input_image()
@@ -72,8 +73,10 @@ class GrayscalePreviewTest(unittest.TestCase):
         )
         report = json.loads(report_output.read_text(encoding="utf-8"))
         self.assertEqual(set(report["presets"].keys()), {"balanced", "detail", "budget"})
+        self.assertIn(report["recommended_preset"], {"balanced", "detail", "budget"})
         with Image.open(comparison_output) as comparison:
             self.assertGreater(comparison.width, 4 * 32)
+            self.assertGreater(comparison.height, 32 + 40)
 
     def test_generate_grayscale_preview_rejects_unknown_preset(self):
         input_path, output_dir = self._make_input_image()
