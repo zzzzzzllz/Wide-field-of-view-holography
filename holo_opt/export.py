@@ -50,6 +50,7 @@ def export_results(
     np.savetxt(run_dir / "phdy.csv", np.asarray(phdy), delimiter=",")
 
     _plot_summary(run_dir / "summary.png", targets, intensities)
+    _plot_stitched_comparison(run_dir / "stitched_comparison.png", config, targets, intensities)
     _plot_loss_curve(run_dir / "loss_curve.png", losses)
     _plot_eta_curve(run_dir / "eta_curve.png", eta_history)
     _plot_gray_levels(run_dir / "gray_levels.png", metrics)
@@ -61,6 +62,12 @@ def export_results(
     if outer_summaries:
         for outer_index, outer_intensities in outer_summaries:
             _plot_summary(run_dir / f"outer_{outer_index:03d}_summary.png", targets, outer_intensities)
+            _plot_stitched_comparison(
+                run_dir / f"outer_{outer_index:03d}_stitched_comparison.png",
+                config,
+                targets,
+                outer_intensities,
+            )
 
     return run_dir
 
@@ -160,6 +167,50 @@ def _plot_summary(path: Path, targets: np.ndarray, intensities: np.ndarray) -> N
             axes[1, channel].imshow(reconstruction[channel], cmap="gray", vmin=0.0, vmax=1.0)
             axes[1, channel].set_title(f"R{channel + 1}")
             axes[1, channel].axis("off")
+        fig.tight_layout()
+        fig.savefig(path, dpi=150)
+    finally:
+        plt.close(fig)
+
+
+def _grid_size_for_channels(channels: int) -> int:
+    grid_size = int(round(channels ** 0.5))
+    if grid_size * grid_size != channels:
+        raise ValueError("stitched comparison requires a square channel count")
+    return grid_size
+
+
+def _stitch_channel_grid(values: np.ndarray) -> np.ndarray:
+    array = np.asarray(values, dtype=np.float32)
+    if array.ndim != 3:
+        raise ValueError("channel grid values must have shape (channels, height, width)")
+    channels, height, width = array.shape
+    grid_size = _grid_size_for_channels(channels)
+    rows = []
+    for row_index in range(grid_size):
+        start = row_index * grid_size
+        rows.append(np.concatenate([array[start + col_index] for col_index in range(grid_size)], axis=1))
+    return np.concatenate(rows, axis=0)
+
+
+def _plot_stitched_comparison(
+    path: Path,
+    config: ExperimentConfig,
+    targets: np.ndarray,
+    intensities: np.ndarray,
+) -> None:
+    target_mosaic = _stitch_channel_grid(np.asarray(targets, dtype=np.float32))
+    reconstruction_mosaic = _stitch_channel_grid(normalize_per_channel(intensities))
+    order_text = " / ".join(f"({m}, {n})" for m, n in config.pair_mat)
+    fig, axes = plt.subplots(1, 2, figsize=(8.0, 4.5), squeeze=False)
+    try:
+        axes[0, 0].imshow(target_mosaic, cmap="gray", vmin=0.0, vmax=1.0)
+        axes[0, 0].set_title("Target stitched from channels")
+        axes[0, 0].axis("off")
+        axes[0, 1].imshow(reconstruction_mosaic, cmap="gray", vmin=0.0, vmax=1.0)
+        axes[0, 1].set_title("Reconstruction stitched from channels")
+        axes[0, 1].axis("off")
+        fig.suptitle(f"Channel order: {order_text}", fontsize=8)
         fig.tight_layout()
         fig.savefig(path, dpi=150)
     finally:

@@ -12,7 +12,7 @@ import torch
 from holo_opt.config import ExperimentConfig, ScoreConfig, validate_config
 from holo_opt.export import export_results
 from holo_opt.field import compute_intensities, compute_loss_terms
-from holo_opt.line_targets import generate_line_art_targets
+from holo_opt.line_targets import generate_grayscale_image_targets, generate_line_art_targets
 from holo_opt.metrics import evaluate_metrics
 from holo_opt.targets import generate_gray_step_targets, load_mat_targets, validate_targets
 from holo_opt.weights import update_weights
@@ -51,8 +51,14 @@ def load_targets_for_config(config: ExperimentConfig) -> np.ndarray:
             expected_channels=config.n_channels,
             size=config.size,
         )
+    elif config.target_mode == "grayscale":
+        targets = generate_grayscale_image_targets(
+            config.target_path,
+            expected_channels=config.n_channels,
+            size=config.size,
+        )
     else:
-        raise ValueError("target_mode must be standard, mat, or lineart")
+        raise ValueError("target_mode must be standard, mat, lineart, or grayscale")
     return validate_targets(targets, expected_channels=config.n_channels)
 
 

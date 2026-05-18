@@ -219,3 +219,11 @@ py -m holo_opt.cli --target-mode standard --size 64 --epochs-per-chunk 300 --out
 - 输出目录下可能存在大量历史实验结果，除非明确要求，不要清理或覆盖。
 - 仓库里可能有未提交实验输出、VS Code 本地配置或资料文件；提交前只 stage 本次任务相关文件。
 - 如果修改了算法设计思路但没有同步 `AGENT.MD`，这次任务就算没有完成。
+
+## 2026-05-10 灰度图 target 输入更新
+
+- 改动动机：在已有 `lineart` 取线条能力之外，新增直接从 RGB 图片生成灰度 target 的能力；灰度图会先转为亮度图，再压低整体亮度，避免大面积色块在单个 diffraction channel 中过白、占满固定亮度预算。正式 `grayscale` target 会按 3x3 切图分给 9 个 channel，不复制整图。
+- 影响范围：`holo_opt/line_targets.py` 新增 `generate_grayscale_image_targets()`、亮度压缩逻辑和 `split_grayscale_image_into_channel_tiles()`；`holo_opt/runner.py`、`holo_opt/config.py`、`holo_opt/cli.py` 接入新的 `target_mode="grayscale"`；`holo_opt/grayscale_preview.py` 提供与线稿预览一致的原图/处理图输出；`.vscode/launch.json` 新增灰度图模板。
+- 用户可见变化：正式运行可用 `py -m holo_opt.cli --target-mode grayscale --target-path inputs/lineart_sources/demo_preview.png --size 128 --device cpu`；预览可用 `py -m holo_opt.grayscale_preview --input demo_preview.png --size 64`，输出文件名为 `*_original.png` 和 `*_grayscale.png`。
+- 算法细节：灰度图不使用线稿路径里的 autocontrast 拉满动态范围，而是使用原始 RGB luminance，经过 gamma 压缩、最大亮度上限和低梯度区域压暗；默认最大亮度约为 `0.65`，大块平坦区域进一步乘以 `0.55` 附近的暗化系数。切块顺序为 row-major：左上、上中、右上、中左、中间、中右、左下、下中、右下；每个 tile resize 到 channel target 尺寸后参与优化。
+- 验证方式：已运行 `py -m unittest discover -s tests -q`，并执行灰度预览命令确认输出 `outputs/lineart_preview/demo_preview_grayscale.png`。

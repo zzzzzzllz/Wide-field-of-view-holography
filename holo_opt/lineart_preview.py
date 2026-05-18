@@ -1,4 +1,4 @@
-"""Preview utility for converting an RGB image into a line-art grayscale target."""
+"""Preview utility for converting an RGB image into an image-derived target."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from PIL import Image
 from holo_opt.line_targets import (
     build_center_weighted_line_image,
     extract_edge_mask,
+    load_rgb_image_as_dimmed_square_grayscale,
     load_rgb_image_as_square_grayscale,
 )
 
@@ -41,23 +42,29 @@ def generate_lineart_preview(
     input_path: str | Path,
     *,
     size: int = 256,
+    mode: str = "lineart",
     output_dir: str | Path = DEFAULT_OUTPUT_DIR,
 ) -> tuple[Path, Path]:
-    """Save a copy of the source image and the processed line-art image."""
+    """Save a copy of the source image and the processed target preview image."""
+    if mode not in {"lineart", "grayscale"}:
+        raise ValueError("mode must be lineart or grayscale")
     resolved_input = resolve_input_path(input_path)
     output_root = Path(output_dir)
     output_root.mkdir(parents=True, exist_ok=True)
 
     stem = _safe_stem(resolved_input)
     original_output = output_root / f"{stem}_original.png"
-    processed_output = output_root / f"{stem}_lineart.png"
+    processed_output = output_root / f"{stem}_{mode}.png"
 
     shutil.copyfile(resolved_input, original_output)
 
-    grayscale = load_rgb_image_as_square_grayscale(resolved_input, size=size)
-    edge_mask = extract_edge_mask(grayscale)
-    line_image = build_center_weighted_line_image(edge_mask, line_radius=max(2, size // 64))
-    image = Image.fromarray(np.uint8(np.clip(line_image, 0.0, 1.0) * 255.0), mode="L")
+    if mode == "lineart":
+        grayscale = load_rgb_image_as_square_grayscale(resolved_input, size=size)
+        edge_mask = extract_edge_mask(grayscale)
+        processed = build_center_weighted_line_image(edge_mask, line_radius=max(2, size // 64))
+    else:
+        processed = load_rgb_image_as_dimmed_square_grayscale(resolved_input, size=size)
+    image = Image.fromarray(np.uint8(np.clip(processed, 0.0, 1.0) * 255.0), mode="L")
     image.save(processed_output)
 
     return original_output, processed_output
@@ -65,10 +72,16 @@ def generate_lineart_preview(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Generate and save a line-art preview from an RGB image."
+        description="Generate and save a target preview from an RGB image."
     )
     parser.add_argument("--input", required=True, help="Image path, or a filename inside inputs/lineart_sources.")
     parser.add_argument("--size", type=int, default=256, help="Square processing size used for line extraction.")
+    parser.add_argument(
+        "--mode",
+        choices=["lineart", "grayscale"],
+        default="lineart",
+        help="Preview either extracted line art or a dimmed grayscale target.",
+    )
     parser.add_argument(
         "--output-dir",
         default=str(DEFAULT_OUTPUT_DIR),
@@ -82,10 +95,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     original_output, processed_output = generate_lineart_preview(
         args.input,
         size=args.size,
+        mode=args.mode,
         output_dir=args.output_dir,
     )
     print(f"Saved original preview to {original_output}")
-    print(f"Saved lineart preview to {processed_output}")
+    print(f"Saved {args.mode} preview to {processed_output}")
     return 0
 
 

@@ -350,6 +350,32 @@ diagnostic_9ch_64_20260510_000000_123456
 - `AGENT.MD`
   - 负责完整维护上下文、设计约定和工作流说明
 
+## 灰度图输入
+
+除了 `lineart` 取线条模式，现在也可以直接把普通 RGB 图片转成压暗后的灰度 target：
+
+```powershell
+py -m holo_opt.grayscale_preview --input demo_preview.png --size 64
+```
+
+正式优化：
+
+```powershell
+py -m holo_opt.cli --target-mode grayscale --target-path inputs/lineart_sources/demo_preview.png --size 128 --device cpu --output-root outputs/holo_experiments --label grayscale
+```
+
+灰度路径会保留图像的大体明暗关系，但不会把大面积色块拉到纯白；默认会压低最大亮度，并让低梯度的大块区域更暗，给单通道固定亮度预算留余量。
+
+正式 `grayscale` 优化不会把同一张图复制到 9 个通道，而是把处理后的灰度图按 3x3 切成 9 块，再按行优先顺序分配给 9 个 diffraction channel：
+
+```text
+channel 1: 左上   channel 2: 上中   channel 3: 右上
+channel 4: 中左   channel 5: 中间   channel 6: 中右
+channel 7: 左下   channel 8: 下中   channel 9: 右下
+```
+
+每个图块会缩放到单个 channel 的完整 target 尺寸后参与优化。
+
 如果你修改了：
 
 - target 生成逻辑

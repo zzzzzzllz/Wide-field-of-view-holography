@@ -46,8 +46,17 @@ class ConfigTest(unittest.TestCase):
         config = ExperimentConfig(target_mode="lineart", target_path="outline.png")
         validate_config(config)
 
+    def test_validate_config_accepts_grayscale_mode_with_target_path(self):
+        config = ExperimentConfig(target_mode="grayscale", target_path="blocks.png")
+        validate_config(config)
+
     def test_validate_config_requires_target_path_for_lineart_mode(self):
         config = ExperimentConfig(target_mode="lineart", target_path=None)
+        with self.assertRaisesRegex(ValueError, "target_path"):
+            validate_config(config)
+
+    def test_validate_config_requires_target_path_for_grayscale_mode(self):
+        config = ExperimentConfig(target_mode="grayscale", target_path=None)
         with self.assertRaisesRegex(ValueError, "target_path"):
             validate_config(config)
 

@@ -1,4 +1,4 @@
-"""Generate line-art grayscale targets from RGB images for holography runs."""
+"""Generate image-derived grayscale targets from RGB images for holography runs."""
 
 from __future__ import annotations
 
@@ -11,6 +11,9 @@ from scipy.ndimage import binary_closing, binary_dilation, distance_transform_ed
 
 DEFAULT_EDGE_PERCENTILE = 75.0
 DEFAULT_BLUR_SIGMA = 1.0
+DEFAULT_GRAYSCALE_MAX_INTENSITY = 0.65
+DEFAULT_GRAYSCALE_GAMMA = 1.6
+DEFAULT_FLAT_REGION_DARKENING = 0.55
 
 
 def _resampling_lanczos() -> int:
@@ -30,6 +33,13 @@ def _line_radius_for_size(size: int) -> int:
 
 def load_rgb_image_as_square_grayscale(path: str | Path, size: int) -> np.ndarray:
     """Load an RGB image, preserve aspect ratio, and pad it into a square grayscale canvas."""
+    canvas = load_rgb_image_as_square_canvas(path, size)
+    grayscale = ImageOps.autocontrast(canvas.convert("L"))
+    return np.asarray(grayscale, dtype=np.float32) / 255.0
+
+
+def load_rgb_image_as_square_canvas(path: str | Path, size: int) -> Image.Image:
+    """Load an RGB image, preserve aspect ratio, and pad it into a square RGB canvas."""
     _validate_size(size)
     image_path = Path(path)
     if not image_path.exists():
@@ -47,9 +57,86 @@ def load_rgb_image_as_square_grayscale(path: str | Path, size: int) -> np.ndarra
     offset_x = (size - resized_width) // 2
     offset_y = (size - resized_height) // 2
     canvas.paste(resized, (offset_x, offset_y))
+    return canvas
 
-    grayscale = ImageOps.autocontrast(canvas.convert("L"))
-    return np.asarray(grayscale, dtype=np.float32) / 255.0
+
+def load_rgb_image_as_dimmed_square_grayscale(path: str | Path, size: int) -> np.ndarray:
+    """Load an RGB image as grayscale without stretching broad color blocks to white."""
+    canvas = load_rgb_image_as_square_canvas(path, size)
+    grayscale = np.asarray(canvas.convert("L"), dtype=np.float32) / 255.0
+    return build_dimmed_grayscale_image(grayscale)
+
+
+def build_dimmed_grayscale_image(
+    grayscale: np.ndarray,
+    *,
+    max_intensity: float = DEFAULT_GRAYSCALE_MAX_INTENSITY,
+    gamma: float = DEFAULT_GRAYSCALE_GAMMA,
+    flat_region_darkening: float = DEFAULT_FLAT_REGION_DARKENING,
+) -> np.ndarray:
+    """Compress grayscale brightness and darken broad low-detail regions."""
+    image = np.asarray(grayscale, dtype=np.float32)
+    if image.ndim != 2:
+        raise ValueError("grayscale image must be 2D")
+    if not np.isfinite(image).all():
+        raise ValueError("grayscale image contains NaN or inf")
+    if not (0.0 < float(max_intensity) <= 1.0):
+        raise ValueError("max_intensity must be in the range (0, 1]")
+    if not (float(gamma) > 0.0):
+        raise ValueError("gamma must be positive")
+    if not (0.0 < float(flat_region_darkening) <= 1.0):
+        raise ValueError("flat_region_darkening must be in the range (0, 1]")
+
+    clipped = np.clip(image, 0.0, 1.0)
+    compressed = np.power(clipped, float(gamma)) * float(max_intensity)
+
+    smoothed = gaussian_filter(clipped, sigma=1.0)
+    gradient_x = sobel(smoothed, axis=1, mode="reflect")
+    gradient_y = sobel(smoothed, axis=0, mode="reflect")
+    gradient = np.hypot(gradient_x, gradient_y)
+    detail = np.zeros_like(clipped, dtype=np.float32)
+    max_gradient = float(gradient.max())
+    if max_gradient > 0.0:
+        detail = gaussian_filter(gradient / max_gradient, sigma=1.0).astype(np.float32)
+
+    flat_scale = float(flat_region_darkening)
+    region_scale = flat_scale + (1.0 - flat_scale) * np.clip(detail * 3.0, 0.0, 1.0)
+    return np.clip(compressed * region_scale, 0.0, float(max_intensity)).astype(np.float32)
+
+
+def _grid_size_for_channels(expected_channels: int) -> int:
+    if type(expected_channels) is not int or expected_channels <= 0:
+        raise ValueError("expected_channels must be a positive integer")
+    grid_size = int(round(expected_channels ** 0.5))
+    if grid_size * grid_size != expected_channels:
+        raise ValueError("grayscale split target requires a square channel count")
+    return grid_size
+
+
+def split_grayscale_image_into_channel_tiles(grayscale: np.ndarray, expected_channels: int = 9) -> np.ndarray:
+    """Split one grayscale image into row-major tiles and resize each tile per channel."""
+    image = np.asarray(grayscale, dtype=np.float32)
+    if image.ndim != 2:
+        raise ValueError("grayscale image must be 2D")
+    if not np.isfinite(image).all():
+        raise ValueError("grayscale image contains NaN or inf")
+
+    grid_size = _grid_size_for_channels(expected_channels)
+    height, width = image.shape
+    max_intensity = float(np.clip(image.max(), 0.0, 1.0))
+    row_indices = np.array_split(np.arange(height), grid_size)
+    col_indices = np.array_split(np.arange(width), grid_size)
+    tiles: list[np.ndarray] = []
+
+    for rows in row_indices:
+        for cols in col_indices:
+            tile = image[int(rows[0]): int(rows[-1]) + 1, int(cols[0]): int(cols[-1]) + 1]
+            tile_image = Image.fromarray(np.uint8(np.clip(tile, 0.0, 1.0) * 255.0), mode="L")
+            resized = tile_image.resize((width, height), resample=_resampling_lanczos())
+            resized_tile = np.asarray(resized, dtype=np.float32) / 255.0
+            tiles.append(np.clip(resized_tile, 0.0, max_intensity))
+
+    return np.stack(tiles, axis=0).astype(np.float32)
 
 
 def extract_edge_mask(
@@ -124,3 +211,18 @@ def generate_line_art_targets(
 
     target_stack = np.repeat(line_image[np.newaxis, :, :], expected_channels, axis=0)
     return target_stack.astype(np.float32)
+
+
+def generate_grayscale_image_targets(
+    path: str | Path,
+    *,
+    expected_channels: int = 9,
+    size: int = 128,
+) -> np.ndarray:
+    """Create dimmed grayscale image tiles and assign one tile to each channel."""
+    _grid_size_for_channels(expected_channels)
+    grayscale = load_rgb_image_as_dimmed_square_grayscale(path, size)
+    if not np.any(grayscale > 0.0):
+        raise ValueError("grayscale target generation produced an empty image")
+
+    return split_grayscale_image_into_channel_tiles(grayscale, expected_channels=expected_channels)
