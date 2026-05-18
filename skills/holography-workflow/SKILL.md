@@ -14,19 +14,23 @@ Use this skill for every non-trivial change in this repository. Keep changes sco
 3. Treat existing uncommitted changes as user work. Do not revert or stage unrelated files.
 4. Prefer Windows PowerShell commands and `py` in user-facing instructions.
 5. Do not commit experiment inputs or outputs. `inputs/` and `outputs/` are local working directories; only `.gitkeep` placeholders belong in Git.
+6. Use a two-step delivery flow: first make the requested changes and stop for user review; only stage, commit, push, or open a PR after the user explicitly confirms the inspected changes.
 
 ## Project Reading Order
 
 Use this order when context is missing:
 
 1. `AGENT.MD`
-2. `README.md`
-3. `holo_opt/runner.py`
-4. `holo_opt/line_targets.py`
-5. `holo_opt/field.py`
-6. `holo_opt/metrics.py`
-7. `holo_opt/export.py`
-8. Relevant tests under `tests/`
+2. `docs/ROADMAP.md`
+3. `README.md`
+4. `holo_opt/runner.py`
+5. `holo_opt/line_targets.py`
+6. `holo_opt/field.py`
+7. `holo_opt/metrics.py`
+8. `holo_opt/export.py`
+9. Relevant tests under `tests/`
+
+Treat `docs/superpowers/plans/2026-05-07-holography-quality-optimization.md` as an implemented historical plan. Do not use it as the current roadmap.
 
 ## Algorithm Change Rules
 
@@ -106,6 +110,8 @@ outputs/.gitkeep
 
 Stage only files related to the current task. Do not use `git add .` when unrelated user edits are present.
 
+Do not create commits automatically after editing. End the implementation pass with a review note that lists changed files, verification results, and what the user should inspect. Commit only after the user says the changes are approved.
+
 ## PR Template
 
 Use this structure for PR descriptions or final delivery notes:
@@ -132,5 +138,7 @@ Use this structure for PR descriptions or final delivery notes:
 
 - Keep `README.md` as the quick-start document.
 - Keep `AGENT.MD` as the full project maintenance context.
+- Keep `docs/ROADMAP.md` as the current next-step plan.
 - Keep this skill as the operational checklist for Codex and collaborators.
+- Keep commit creation as a separate user-approved step after review.
 - Do not delete historical local experiment output unless the user explicitly asks; ignore it in Git instead.

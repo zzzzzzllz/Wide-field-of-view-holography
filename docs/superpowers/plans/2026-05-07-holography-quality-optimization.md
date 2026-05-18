@@ -1,6 +1,22 @@
-# Holography Quality Optimization Implementation Plan
+# Historical Plan: Holography Quality Optimization
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> Status: implemented. This file is retained as historical implementation context only.
+> Do not use it as the current project roadmap. For current next-step directions, read `docs/ROADMAP.md`.
+
+The work described here has already been integrated into the project baseline:
+
+- `LossConfig` and `diagnostic_interval`
+- structured loss terms
+- diagnostic CSV and per-outer-loop exports
+- runner integration
+- CLI loss-weight options
+- VS Code diagnostic and quality presets
+
+The next phase is tracked in `docs/ROADMAP.md`.
+
+---
+
+## Original Plan
 
 **Goal:** Add diagnostic exports and enhanced loss terms so noisy holography reconstructions can be diagnosed and improved.
 

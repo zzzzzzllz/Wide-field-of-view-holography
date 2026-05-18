@@ -29,11 +29,15 @@
 第一次接触这个仓库，建议按下面顺序读：
 
 1. `AGENT.MD`
-2. `holo_opt/runner.py`
-3. `holo_opt/targets.py`
-4. `holo_opt/line_targets.py`
-5. `holo_opt/field.py`
-6. `holo_opt/export.py`
+2. `docs/ROADMAP.md`
+3. `skills/holography-workflow/SKILL.md`
+4. `holo_opt/runner.py`
+5. `holo_opt/targets.py`
+6. `holo_opt/line_targets.py`
+7. `holo_opt/field.py`
+8. `holo_opt/export.py`
+
+注意：`docs/superpowers/plans/2026-05-07-holography-quality-optimization.md` 是已经落地的历史实施计划，不再代表当前下一阶段路线。当前后续推进方向以 `docs/ROADMAP.md` 为准。
 
 ## 代码结构
 
