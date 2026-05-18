@@ -72,6 +72,7 @@ class ExportResultsTest(unittest.TestCase):
                 "metrics.csv",
                 "metrics.json",
                 "summary.png",
+                "stitched_comparison.png",
                 "eta_curve.png",
                 "loss_curve.png",
                 "gray_levels.png",
@@ -118,7 +119,7 @@ class ExportResultsTest(unittest.TestCase):
 
             np.testing.assert_allclose(np.loadtxt(run_dir / "phdx.csv", delimiter=","), phdx)
             np.testing.assert_allclose(np.loadtxt(run_dir / "phdy.csv", delimiter=","), phdy)
-            for image_name in ("summary.png", "eta_curve.png", "loss_curve.png", "gray_levels.png"):
+            for image_name in ("summary.png", "stitched_comparison.png", "eta_curve.png", "loss_curve.png", "gray_levels.png"):
                 self.assertGreater((run_dir / image_name).stat().st_size, 0)
         finally:
             shutil.rmtree(tmp_path, ignore_errors=True)
@@ -268,6 +269,7 @@ class ExportResultsTest(unittest.TestCase):
             self.assertEqual(loss_terms_rows[1], ["1", "2.0", "1.0", "0.2", "0.3", "0.4", "0.0"])
             self.assertGreater((run_dir / "loss_terms.png").stat().st_size, 0)
             self.assertGreater((run_dir / "outer_001_summary.png").stat().st_size, 0)
+            self.assertGreater((run_dir / "outer_001_stitched_comparison.png").stat().st_size, 0)
         finally:
             shutil.rmtree(tmp_path, ignore_errors=True)
 

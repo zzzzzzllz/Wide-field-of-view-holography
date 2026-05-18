@@ -131,6 +131,27 @@
         "--label",
         "mat9"
       ]
+    },
+    {
+      "name": "Holo grayscale image template",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "holo_opt.cli",
+      "console": "integratedTerminal",
+      "args": [
+        "--target-mode",
+        "grayscale",
+        "--target-path",
+        "inputs/lineart_sources/demo_preview.png",
+        "--size",
+        "128",
+        "--device",
+        "cpu",
+        "--output-root",
+        "outputs/holo_experiments",
+        "--label",
+        "grayscale"
+      ]
     }
   ]
 }

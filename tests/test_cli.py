@@ -97,6 +97,42 @@ class CliTest(unittest.TestCase):
         self.assertEqual(config.loss.background_weight, 0.1)
         self.assertEqual(config.diagnostic_interval, 2)
 
+    def test_config_from_args_supports_lineart_target_mode(self):
+        args = build_parser().parse_args(
+            [
+                "--target-mode",
+                "lineart",
+                "--target-path",
+                "outline.png",
+                "--size",
+                "96",
+            ]
+        )
+
+        config = config_from_args(args)
+
+        self.assertEqual(config.target_mode, "lineart")
+        self.assertEqual(config.target_path, "outline.png")
+        self.assertEqual(config.size, 96)
+
+    def test_config_from_args_supports_grayscale_target_mode(self):
+        args = build_parser().parse_args(
+            [
+                "--target-mode",
+                "grayscale",
+                "--target-path",
+                "blocks.png",
+                "--size",
+                "96",
+            ]
+        )
+
+        config = config_from_args(args)
+
+        self.assertEqual(config.target_mode, "grayscale")
+        self.assertEqual(config.target_path, "blocks.png")
+        self.assertEqual(config.size, 96)
+
 
 if __name__ == "__main__":
     unittest.main()

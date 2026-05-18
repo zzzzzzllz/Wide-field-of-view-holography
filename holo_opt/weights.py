@@ -1,3 +1,5 @@
+"""Adaptive channel-weight updates driven by efficiency and reconstruction error."""
+
 from __future__ import annotations
 
 import numpy as np

@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from PIL import Image, ImageDraw
 
 import holo_opt.runner as runner
 from holo_opt.config import ExperimentConfig, ScoreConfig
@@ -30,6 +31,42 @@ class RunnerTest(unittest.TestCase):
         targets = load_targets_for_config(config)
         self.assertEqual(targets.shape, (9, 8, 8))
         self.assertEqual(targets.dtype, np.float32)
+
+    def test_load_targets_for_lineart_config_returns_valid_shape(self):
+        temp_dir = Path.cwd() / "outputs" / "test_runner" / uuid.uuid4().hex
+        temp_dir.mkdir(parents=True, exist_ok=False)
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+        image_path = temp_dir / "outline.png"
+        image = Image.new("RGB", (24, 24), color=(0, 0, 0))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((5, 5, 19, 19), outline=(255, 255, 255), width=2)
+        image.save(image_path)
+
+        config = ExperimentConfig(size=8, target_mode="lineart", target_path=str(image_path))
+        targets = load_targets_for_config(config)
+
+        self.assertEqual(targets.shape, (9, 8, 8))
+        self.assertEqual(targets.dtype, np.float32)
+        self.assertGreater(float(targets.max()), 0.0)
+
+    def test_load_targets_for_grayscale_config_returns_valid_shape(self):
+        temp_dir = Path.cwd() / "outputs" / "test_runner" / uuid.uuid4().hex
+        temp_dir.mkdir(parents=True, exist_ok=False)
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+        image_path = temp_dir / "blocks.png"
+        image = Image.new("RGB", (24, 24), color=(0, 0, 0))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((5, 5, 19, 19), fill=(255, 255, 255))
+        image.save(image_path)
+
+        config = ExperimentConfig(size=8, target_mode="grayscale", target_path=str(image_path))
+        targets = load_targets_for_config(config)
+
+        self.assertEqual(targets.shape, (9, 8, 8))
+        self.assertEqual(targets.dtype, np.float32)
+        self.assertGreater(float(targets.max()), 0.0)
+        self.assertLessEqual(float(targets.max()), 0.65)
+        self.assertFalse(np.allclose(targets[0], targets[4]))
 
     def test_compute_score_uses_score_config_weights(self):
         summary = {
@@ -95,6 +132,7 @@ class RunnerTest(unittest.TestCase):
             "metrics.csv",
             "metrics.json",
             "summary.png",
+            "stitched_comparison.png",
             "eta_curve.png",
             "loss_curve.png",
             "gray_levels.png",
@@ -122,6 +160,7 @@ class RunnerTest(unittest.TestCase):
         self.assertTrue((result.run_dir / "diagnostics.csv").exists())
         self.assertTrue((result.run_dir / "loss_terms.csv").exists())
         self.assertTrue((result.run_dir / "outer_001_summary.png").exists())
+        self.assertTrue((result.run_dir / "outer_001_stitched_comparison.png").exists())
 
     def test_run_experiment_prints_progress_at_interval(self):
         output_root = Path.cwd() / "outputs" / "test_runner" / uuid.uuid4().hex
@@ -172,7 +211,9 @@ class RunnerTest(unittest.TestCase):
             loss_rows = list(csv.DictReader(handle))
         self.assertEqual(len(loss_rows), 4)
         self.assertFalse((result.run_dir / "outer_001_summary.png").exists())
+        self.assertFalse((result.run_dir / "outer_001_stitched_comparison.png").exists())
         self.assertTrue((result.run_dir / "outer_002_summary.png").exists())
+        self.assertTrue((result.run_dir / "outer_002_stitched_comparison.png").exists())
 
 
 if __name__ == "__main__":

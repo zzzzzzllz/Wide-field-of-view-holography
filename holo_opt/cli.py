@@ -1,3 +1,5 @@
+"""Command-line entrypoint for configuring and launching a holography run."""
+
 from __future__ import annotations
 
 import argparse
@@ -16,7 +18,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run 9-channel grayscale holography optimization."
     )
-    parser.add_argument("--target-mode", choices=["standard", "mat"], default="standard")
+    parser.add_argument("--target-mode", choices=["standard", "mat", "lineart", "grayscale"], default="standard")
     parser.add_argument("--target-path", default=None)
     parser.add_argument("--mat-variable", default="bw_all")
     parser.add_argument("--size", type=int, default=128)

@@ -1,3 +1,5 @@
+"""Main experiment loop that optimizes phase maps and records diagnostics."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -10,6 +12,7 @@ import torch
 from holo_opt.config import ExperimentConfig, ScoreConfig, validate_config
 from holo_opt.export import export_results
 from holo_opt.field import compute_intensities, compute_loss_terms
+from holo_opt.line_targets import generate_grayscale_image_targets, generate_line_art_targets
 from holo_opt.metrics import evaluate_metrics
 from holo_opt.targets import generate_gray_step_targets, load_mat_targets, validate_targets
 from holo_opt.weights import update_weights
@@ -42,8 +45,20 @@ def load_targets_for_config(config: ExperimentConfig) -> np.ndarray:
             variable=config.mat_variable,
             expected_channels=config.n_channels,
         )
+    elif config.target_mode == "lineart":
+        targets = generate_line_art_targets(
+            config.target_path,
+            expected_channels=config.n_channels,
+            size=config.size,
+        )
+    elif config.target_mode == "grayscale":
+        targets = generate_grayscale_image_targets(
+            config.target_path,
+            expected_channels=config.n_channels,
+            size=config.size,
+        )
     else:
-        raise ValueError("target_mode must be standard or mat")
+        raise ValueError("target_mode must be standard, mat, lineart, or grayscale")
     return validate_targets(targets, expected_channels=config.n_channels)
 
 
@@ -89,10 +104,16 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
     np.random.seed(config.seed)
     rng = np.random.default_rng(config.seed)
 
+    # Stage 1: prepare the multi-channel target images that each diffraction
+    # channel should reproduce in the far field.
     targets_np = load_targets_for_config(config)
     height, width = targets_np.shape[-2], targets_np.shape[-1]
     targets = torch.as_tensor(targets_np, dtype=torch.float32, device=device)
     pair_mat = torch.as_tensor(config.pair_mat, dtype=torch.float32, device=device)
+
+    # Stage 2: initialize the proxy on-chip structure parameters. The optimizer
+    # does not directly update nanostructure geometry; it updates the effective
+    # phase maps phdx/phdy used by the FFT model.
     phdx = torch.tensor(
         rng.uniform(0.0, 2.0 * np.pi, size=(height, width)),
         dtype=torch.float32,
@@ -119,6 +140,8 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
     best_state: dict[str, Any] | None = None
     total_steps = config.outer_loops * config.epochs_per_chunk
 
+    # Stage 3: optimize the proxy structure so that every configured channel
+    # produces a far-field image close to its own target image.
     for _outer_index in range(config.outer_loops):
         for _epoch_index in range(config.epochs_per_chunk):
             optimizer.zero_grad()
@@ -195,6 +218,8 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
     if best_state is None:
         raise RuntimeError("no valid optimization state produced")
 
+    # Stage 4: export the best optimization state and all diagnostics for later
+    # visual inspection under outputs/holo_experiments.
     run_dir = export_results(
         config,
         targets_np,

@@ -1,3 +1,5 @@
+"""FFT-based field simulation and differentiable loss terms for image optimization."""
+
 from __future__ import annotations
 
 import torch
@@ -11,6 +13,7 @@ def fftshift2(values: torch.Tensor) -> torch.Tensor:
 
 
 def compute_intensities(phdx: torch.Tensor, phdy: torch.Tensor, pair_mat: torch.Tensor) -> torch.Tensor:
+    """Simulate one far-field intensity image per diffraction-channel pair."""
     if phdx.shape != phdy.shape:
         raise ValueError("phdx and phdy must have the same shape")
     channels = []
@@ -126,6 +129,7 @@ def compute_loss_terms(
     loss_weights: dict[str, float] | None = None,
     epsilon: float = 1e-8,
 ) -> dict[str, torch.Tensor]:
+    """Compare simulated far-field channels against target channels and return loss terms."""
     if loss_weights is None:
         loss_weights = {}
 

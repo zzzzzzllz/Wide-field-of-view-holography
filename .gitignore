@@ -4,7 +4,13 @@ __pycache__/
 .superpowers/
 .worktrees/
 .tmp/
-outputs/
+inputs/**
+!inputs/
+!inputs/lineart_sources/
+!inputs/lineart_sources/.gitkeep
+outputs/**
+!outputs/
+!outputs/.gitkeep
 holo_results/
 results_*channels_/
 *.zip

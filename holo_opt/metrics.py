@@ -1,3 +1,5 @@
+"""Evaluation metrics for reconstruction quality, grayscale behavior, and efficiency."""
+
 from __future__ import annotations
 
 import numpy as np

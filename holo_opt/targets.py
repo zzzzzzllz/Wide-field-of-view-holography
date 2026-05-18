@@ -1,3 +1,5 @@
+"""Target generation and MAT-file loading for multi-channel far-field objectives."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -19,6 +21,7 @@ def normalize_array(values: np.ndarray) -> np.ndarray:
 
 
 def generate_gray_step_targets(n_channels: int = 9, size: int = 128, levels: int = 16) -> np.ndarray:
+    """Generate the built-in multi-channel grayscale target stack used for diagnostics."""
     if n_channels <= 0:
         raise ValueError("n_channels must be positive")
     if size <= 0:
@@ -37,6 +40,7 @@ def generate_gray_step_targets(n_channels: int = 9, size: int = 128, levels: int
 
 
 def validate_targets(targets: np.ndarray, expected_channels: int) -> np.ndarray:
+    """Validate that targets match the expected (channels, height, width) layout."""
     arr = np.asarray(targets, dtype=np.float32)
     if arr.ndim != 3:
         raise ValueError("targets must have shape (channels, height, width)")
@@ -50,6 +54,7 @@ def validate_targets(targets: np.ndarray, expected_channels: int) -> np.ndarray:
 
 
 def load_mat_targets(path: str | Path, variable: str = "bw_all", expected_channels: int = 9) -> np.ndarray:
+    """Load a user-provided multi-channel target stack from a MAT file."""
     mat_path = Path(path)
     if not mat_path.exists():
         raise FileNotFoundError(str(mat_path))
