@@ -362,6 +362,32 @@ diagnostic_9ch_64_20260510_000000_123456
 py -m holo_opt.grayscale_preview --input demo_preview.png --size 64
 ```
 
+如果你当前只想看“预处理前后差别”，不想看 target 或最终优化结果，推荐直接用多 preset 预览：
+
+```powershell
+py -m holo_opt.grayscale_preview --input demo_preview.png --size 128 --preset balanced detail budget
+```
+
+这条命令会额外导出：
+
+- `*_source_grayscale.png`
+  - 原始输入图补边成正方形后的灰度图
+- `*_balanced_grayscale.png` / `*_detail_grayscale.png` / `*_budget_grayscale.png`
+  - 三种不同预处理风格的结果
+- `*_comparison.png`
+  - `source RGB`、`source grayscale` 和多个 preset 处理结果的并排对比
+- `*_preview_report.json`
+  - 每个 preset 的整体亮度、边缘密度和平坦区比例，以及 9 个 tile 预算缩放范围摘要
+
+三个 preset 的含义：
+
+- `balanced`
+  - 默认配置，整体均衡
+- `detail`
+  - 更偏向保局部细节和边缘
+- `budget`
+  - 更偏向压亮区和控制能量预算
+
 正式优化：
 
 ```powershell

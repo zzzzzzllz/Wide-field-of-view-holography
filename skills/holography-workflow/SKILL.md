@@ -15,6 +15,7 @@ Use this skill for every non-trivial change in this repository. Keep changes sco
 4. Prefer Windows PowerShell commands and `py` in user-facing instructions.
 5. Do not commit experiment inputs or outputs. `inputs/` and `outputs/` are local working directories; only `.gitkeep` placeholders belong in Git.
 6. Use a two-step delivery flow: first make the requested changes and stop for user review; only stage, commit, push, or open a PR after the user explicitly confirms the inspected changes.
+7. For all GitHub-related work in this repository, use the CLI route only (`git`, `gh`, and related shell commands). Do not use GitHub connector/app tools for pushes, PRs, reviews, comments, or issue operations.
 
 ## Project Reading Order
 

@@ -1,3 +1,4 @@
+import json
 import shutil
 import unittest
 import uuid
@@ -5,11 +6,11 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from holo_opt.grayscale_preview import generate_grayscale_preview
+from holo_opt.grayscale_preview import PREVIEW_PRESETS, build_parser, generate_grayscale_preview
 
 
 class GrayscalePreviewTest(unittest.TestCase):
-    def test_generate_grayscale_preview_writes_original_and_processed_images(self):
+    def _make_input_image(self) -> tuple[Path, Path]:
         base_dir = Path.cwd() / "outputs" / "test_grayscale_preview" / uuid.uuid4().hex
         input_dir = base_dir / "inputs"
         output_dir = base_dir / "preview"
@@ -17,25 +18,78 @@ class GrayscalePreviewTest(unittest.TestCase):
         self.addCleanup(lambda: shutil.rmtree(base_dir, ignore_errors=True))
 
         input_path = input_dir / "demo.png"
-        image = Image.new("RGB", (32, 24), color=(0, 0, 0))
+        image = Image.new("RGB", (48, 32), color=(18, 18, 18))
         draw = ImageDraw.Draw(image)
-        draw.rectangle((4, 4, 28, 20), fill=(255, 255, 255))
+        draw.rectangle((4, 4, 44, 28), fill=(180, 180, 180))
+        draw.line((6, 26, 42, 8), fill=(255, 255, 255), width=2)
         image.save(input_path)
+        return input_path, output_dir
 
-        original_output, processed_output = generate_grayscale_preview(
+    def test_generate_grayscale_preview_writes_single_preset_outputs(self):
+        input_path, output_dir = self._make_input_image()
+
+        original_output, source_output, processed_outputs, comparison_output, report_output = generate_grayscale_preview(
             input_path,
             size=32,
             output_dir=output_dir,
+            presets=("balanced",),
         )
 
         self.assertTrue(original_output.exists())
-        self.assertTrue(processed_output.exists())
-        self.assertEqual(original_output.name, "demo_original.png")
-        self.assertEqual(processed_output.name, "demo_grayscale.png")
-        self.assertGreater(original_output.stat().st_size, 0)
-        self.assertGreater(processed_output.stat().st_size, 0)
-        with Image.open(processed_output) as processed:
+        self.assertTrue(source_output.exists())
+        self.assertEqual(len(processed_outputs), 1)
+        self.assertTrue(processed_outputs[0].exists())
+        self.assertEqual(processed_outputs[0].name, "demo_balanced_grayscale.png")
+        self.assertTrue(comparison_output.exists())
+        self.assertTrue(report_output.exists())
+        with Image.open(processed_outputs[0]) as processed:
             self.assertLessEqual(max(processed.getdata()), 165)
+        with Image.open(comparison_output) as comparison:
+            self.assertGreater(comparison.width, comparison.height)
+        report = json.loads(report_output.read_text(encoding="utf-8"))
+        self.assertEqual(report["size"], 32)
+        self.assertIn("balanced", report["presets"])
+
+    def test_generate_grayscale_preview_supports_multiple_presets(self):
+        input_path, output_dir = self._make_input_image()
+
+        _, source_output, processed_outputs, comparison_output, report_output = generate_grayscale_preview(
+            input_path,
+            size=32,
+            output_dir=output_dir,
+            presets=("balanced", "detail", "budget"),
+        )
+
+        self.assertTrue(source_output.exists())
+        self.assertEqual(len(processed_outputs), 3)
+        self.assertEqual(
+            [path.name for path in processed_outputs],
+            [
+                "demo_balanced_grayscale.png",
+                "demo_detail_grayscale.png",
+                "demo_budget_grayscale.png",
+            ],
+        )
+        report = json.loads(report_output.read_text(encoding="utf-8"))
+        self.assertEqual(set(report["presets"].keys()), {"balanced", "detail", "budget"})
+        with Image.open(comparison_output) as comparison:
+            self.assertGreater(comparison.width, 4 * 32)
+
+    def test_generate_grayscale_preview_rejects_unknown_preset(self):
+        input_path, output_dir = self._make_input_image()
+
+        with self.assertRaisesRegex(ValueError, "unknown preview preset"):
+            generate_grayscale_preview(
+                input_path,
+                size=32,
+                output_dir=output_dir,
+                presets=("missing",),
+            )
+
+    def test_parser_exposes_preview_presets(self):
+        args = build_parser().parse_args(["--input", "demo.png", "--preset", "balanced", "detail"])
+        self.assertEqual(args.preset, ["balanced", "detail"])
+        self.assertEqual(set(PREVIEW_PRESETS.keys()), {"balanced", "detail", "budget"})
 
 
 if __name__ == "__main__":
