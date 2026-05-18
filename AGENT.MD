@@ -53,10 +53,12 @@
 ## 协作与平台约定
 
 - 本仓库以 Windows 为主运行平台，以 PowerShell 命令和 `py` 启动方式为标准工作流。
+- 所有 GitHub 相关操作一律走 CLI 路线，例如 `git` 和 `gh`；不要使用 GitHub connector / app tools 处理 branch、push、PR、review、comment 或 issue。
 - macOS 主要用于轻量阅读、文档补充、少量代码调整和 review；不要把仅在 macOS 验证过的行为表述成“项目已完全验证”。
 - 写命令示例时，优先给出 Windows 可直接执行的版本；如果当前只在 macOS 做了静态修改或局部检查，要明确说明“Windows 侧需要按下列命令复核”。
 - 新增逻辑时避免引入只适配单一平台的路径处理、shell 写法或缓存目录假设；路径拼接优先走 Python 标准库，不写死 macOS 风格路径。
 - 若发现某个验证在当前机器上无法完成，要把原因写明白，例如 `torch` 缺失、CUDA 不可用、matplotlib/font cache 权限告警等，不要模糊带过。
+- 默认采用两步交付：先完成修改并停下来让用户检查；只有用户明确确认后，才 stage、commit、push 或创建 PR。除非用户明确要求“一次性提交”，否则不要在同一轮里自动提交。
 
 ## 文档同步规则
 
@@ -89,6 +91,8 @@
 
 当前主线不是空白原型，而是已经完成了一轮“质量优化”落地，后续 AI 需要在这个基础上继续推进，而不是重复造轮子。
 
+当前后续推进方向的唯一正式入口是 `docs/ROADMAP.md`。`docs/superpowers/plans/2026-05-07-holography-quality-optimization.md` 是历史已实施计划，只用于追溯上一轮质量优化如何落地，不再作为新任务清单。
+
 - 已落地能力：
   - `LossConfig` 和 `diagnostic_interval` 已进入配置层。
   - target 侧已支持 3 种输入模式：`standard`、`mat`、`lineart`。
@@ -102,10 +106,11 @@
   - 优先解决噪声重建、灰度不单调、通道能量塌缩、训练不稳定这几类问题。
   - 保持 FFT 原型架构，不扩展到 RCWA/FDTD、单元库映射、GDS 导出等更重的物理设计链条。
 - 下一阶段更值得继续推进的方向：
-  - 改进初始化策略，降低随机初相导致的不稳定性。
-  - 基于真实实验结果继续调权重，而不是只停留在默认超参数。
-  - 增加更明确的收敛诊断，例如 early-stop 依据、best-outer 对比、目标类型分支诊断。
-  - 强化 Windows 环境下的一键运行体验和依赖说明，减少解释器不一致带来的误判。
+  - 球形视场与平面 target 的几何映射。
+  - 灰度质量与单通道能量预算优化。
+  - 输入图片适配与 image2 辅助 target 设计。
+  - 收敛稳定性、多 seed 与实验批处理。
+  - 工作流与实验报告自动化。
 
 ## 推荐运行方式
 
@@ -227,3 +232,19 @@ py -m holo_opt.cli --target-mode standard --size 64 --epochs-per-chunk 300 --out
 - 用户可见变化：正式运行可用 `py -m holo_opt.cli --target-mode grayscale --target-path inputs/lineart_sources/demo_preview.png --size 128 --device cpu`；预览可用 `py -m holo_opt.grayscale_preview --input demo_preview.png --size 64`，输出文件名为 `*_original.png` 和 `*_grayscale.png`。
 - 算法细节：灰度图不使用线稿路径里的 autocontrast 拉满动态范围，而是使用原始 RGB luminance，经过 gamma 压缩、最大亮度上限和低梯度区域压暗；默认最大亮度约为 `0.65`，大块平坦区域进一步乘以 `0.55` 附近的暗化系数。切块顺序为 row-major：左上、上中、右上、中左、中间、中右、左下、下中、右下；每个 tile resize 到 channel target 尺寸后参与优化。
 - 验证方式：已运行 `py -m unittest discover -s tests -q`，并执行灰度预览命令确认输出 `outputs/lineart_preview/demo_preview_grayscale.png`。
+
+## 2026-05-18 灰度预处理增强与输入适配诊断
+
+- 改动动机：仅靠全局 gamma 压缩和大块平坦区压暗，容易把局部细节一起压没，导致输入图在进入全息优化前已经丢掉轮廓层次；同时 3x3 切块后各通道亮度预算分配不透明，难以判断某张图是不是天然不适合当前固定能量设置。
+- 影响范围：`holo_opt/line_targets.py` 新增更强的灰度预处理链路、tile 预算均衡和 `GrayscaleTargetArtifacts` 诊断产物；`holo_opt/config.py`、`holo_opt/cli.py` 新增灰度预处理配置；`holo_opt/runner.py`、`holo_opt/export.py` 现在会在 `grayscale` 运行时额外导出 `preprocess_comparison.png` 与 `target_energy_report.csv`；`holo_opt/grayscale_preview.py` 改为复用正式 `grayscale` 预处理链路；相关测试已同步更新。
+- 用户可见变化：`grayscale` 模式现在支持 `--grayscale-max-intensity`、`--grayscale-gamma`、`--grayscale-flat-darkening`、`--grayscale-detail-boost`、`--grayscale-tile-balance-strength`、`--grayscale-tile-balance-clip` 六个调参入口；正式运行后可直接查看 `preprocess_comparison.png` 判断原图灰度、处理后灰度和 stitched target 的差异，再查看 `target_energy_report.csv` 判断 9 个 tile 的亮度预算是否过于失衡。
+- 算法细节：预处理先对非黑背景前景做稳健亮度归一化，再做 gamma 压缩；随后用 DoG 型局部细节信号把亮边缘和细节重新抬回来，避免“整体压暗后细节一起消失”；对低梯度大块区域仍保留压暗；最后在切成 3x3 tile 后，对非空 tile 做温和亮度预算均衡，减少个别 tile 过亮或过暗导致的单通道压力失衡。
+- 验证方式：已运行 `py -m unittest discover -s tests -q`；已执行 `py -m holo_opt.grayscale_preview --input outputs/tmp_preprocess_probe/probe.png --size 64 --output-dir outputs/tmp_preprocess_probe/preview`；已执行 `py -m holo_opt.cli --target-mode grayscale --target-path outputs/tmp_preprocess_probe/probe.png --size 16 --epochs-per-chunk 2 --outer-loops 1 --device cpu --output-root outputs/tmp_preprocess_probe/runs --label grayscale_probe`，确认导出 `preprocess_comparison.png` 和 `target_energy_report.csv`。
+
+## 2026-05-18 grayscale preview 多 preset 对比
+
+- 改动动机：用户当前希望先逐步看“预处理前后效果”，不着急看 target 或最终全息优化结果，所以需要把 `grayscale_preview` 从单张处理图扩成可直接比较多种预处理风格的轻量预览工具。
+- 影响范围：`holo_opt/grayscale_preview.py` 新增 `balanced`、`detail`、`budget` 三个预设风格，支持 `--preset` 一次输出多组处理结果，并新增 `*_comparison.png` 和 `*_preview_report.json`；`tests/test_grayscale_preview.py` 改为覆盖单 preset、多 preset、报告和参数解析；`README.md` 补充了 preview-only 的使用方式。
+- 用户可见变化：现在可直接运行 `py -m holo_opt.grayscale_preview --input demo_preview.png --size 128 --preset balanced detail budget`，只看 `source RGB`、`source grayscale` 和三种处理结果的并排对比，不需要先进入 target 切块或正式优化。
+- 算法细节：`balanced` 使用当前默认参数；`detail` 提高局部细节回提和亮区保留；`budget` 更强调压低峰值亮度和收紧 tile 预算波动。`*_preview_report.json` 会汇总每个 preset 的整体均值亮度、边缘密度、平坦区比例，以及 tile 预算缩放范围，方便在不跑优化的情况下先做输入图筛选。
+- 验证方式：已运行 `py -m unittest tests.test_grayscale_preview -q` 和 `py -m unittest discover -s tests -q`；已执行 `py -m holo_opt.grayscale_preview --input outputs/tmp_preprocess_probe/probe.png --size 64 --preset balanced detail budget --output-dir outputs/tmp_preprocess_probe/preview_multi`，确认输出多张 preset 处理图、对比图和 JSON 报告。

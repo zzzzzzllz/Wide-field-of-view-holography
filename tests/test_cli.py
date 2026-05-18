@@ -124,6 +124,18 @@ class CliTest(unittest.TestCase):
                 "blocks.png",
                 "--size",
                 "96",
+                "--grayscale-max-intensity",
+                "0.6",
+                "--grayscale-gamma",
+                "1.4",
+                "--grayscale-flat-darkening",
+                "0.5",
+                "--grayscale-detail-boost",
+                "0.3",
+                "--grayscale-tile-balance-strength",
+                "0.25",
+                "--grayscale-tile-balance-clip",
+                "1.2",
             ]
         )
 
@@ -132,6 +144,12 @@ class CliTest(unittest.TestCase):
         self.assertEqual(config.target_mode, "grayscale")
         self.assertEqual(config.target_path, "blocks.png")
         self.assertEqual(config.size, 96)
+        self.assertEqual(config.grayscale_preprocess.max_intensity, 0.6)
+        self.assertEqual(config.grayscale_preprocess.gamma, 1.4)
+        self.assertEqual(config.grayscale_preprocess.flat_region_darkening, 0.5)
+        self.assertEqual(config.grayscale_preprocess.detail_boost, 0.3)
+        self.assertEqual(config.grayscale_preprocess.tile_balance_strength, 0.25)
+        self.assertEqual(config.grayscale_preprocess.tile_balance_clip, 1.2)
 
 
 if __name__ == "__main__":

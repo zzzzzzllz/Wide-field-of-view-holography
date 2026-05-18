@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from holo_opt.config import ExperimentConfig, config_to_dict
+from holo_opt.line_targets import GrayscaleTargetArtifacts
 from holo_opt.metrics import normalize_per_channel
 
 
@@ -29,6 +30,7 @@ def export_results(
     diagnostics: list[dict[str, float]] | None = None,
     loss_terms_history: list[dict[str, float]] | None = None,
     outer_summaries: list[tuple[int, np.ndarray]] | None = None,
+    grayscale_artifacts: GrayscaleTargetArtifacts | None = None,
 ) -> Path:
     """Write one complete experiment folder containing images, tables, and raw arrays."""
     run_dir = create_run_dir(config)
@@ -54,6 +56,14 @@ def export_results(
     _plot_loss_curve(run_dir / "loss_curve.png", losses)
     _plot_eta_curve(run_dir / "eta_curve.png", eta_history)
     _plot_gray_levels(run_dir / "gray_levels.png", metrics)
+    if grayscale_artifacts is not None:
+        _write_rows_csv(run_dir / "target_energy_report.csv", grayscale_artifacts.report_rows)
+        _plot_preprocess_comparison(
+            run_dir / "preprocess_comparison.png",
+            grayscale_artifacts.source_grayscale,
+            grayscale_artifacts.processed_grayscale,
+            grayscale_artifacts.stitched_target,
+        )
     if diagnostics:
         _write_rows_csv(run_dir / "diagnostics.csv", diagnostics)
     if loss_terms_history:
@@ -138,7 +148,7 @@ def _write_metrics_csv(path: Path, metrics: dict[str, Any]) -> None:
             writer.writerow([row["channel"], row["mse"], row["eta"], row["gray_level_error"], score])
 
 
-def _write_rows_csv(path: Path, rows: list[dict[str, float]]) -> None:
+def _write_rows_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     if not rows:
         return
     fieldnames = []
@@ -152,6 +162,29 @@ def _write_rows_csv(path: Path, rows: list[dict[str, float]]) -> None:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
+
+
+def _plot_preprocess_comparison(
+    path: Path,
+    source_grayscale: np.ndarray,
+    processed_grayscale: np.ndarray,
+    stitched_target: np.ndarray,
+) -> None:
+    fig, axes = plt.subplots(1, 3, figsize=(10.0, 3.8), squeeze=False)
+    try:
+        panels = (
+            (source_grayscale, "Source grayscale"),
+            (processed_grayscale, "Processed grayscale"),
+            (stitched_target, "Stitched target"),
+        )
+        for axis, (image, title) in zip(axes[0], panels, strict=False):
+            axis.imshow(np.asarray(image, dtype=np.float32), cmap="gray", vmin=0.0, vmax=1.0)
+            axis.set_title(title)
+            axis.axis("off")
+        fig.tight_layout()
+        fig.savefig(path, dpi=150)
+    finally:
+        plt.close(fig)
 
 
 def _plot_summary(path: Path, targets: np.ndarray, intensities: np.ndarray) -> None:

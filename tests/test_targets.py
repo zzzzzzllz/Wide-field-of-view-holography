@@ -11,10 +11,12 @@ from PIL import Image, ImageDraw
 from holo_opt.line_targets import (
     build_center_weighted_line_image,
     build_dimmed_grayscale_image,
+    generate_grayscale_target_artifacts,
     generate_grayscale_image_targets,
     generate_line_art_targets,
     load_rgb_image_as_square_grayscale,
     split_grayscale_image_into_channel_tiles,
+    split_grayscale_image_into_channel_tiles_with_report,
 )
 from holo_opt.targets import generate_gray_step_targets, load_mat_targets, normalize_array, validate_targets
 
@@ -86,6 +88,26 @@ class TargetsTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "square channel count"):
             split_grayscale_image_into_channel_tiles(np.ones((8, 8), dtype=np.float32), expected_channels=8)
 
+    def test_split_grayscale_image_into_channel_tiles_with_report_balances_tiles(self):
+        grayscale = np.zeros((12, 12), dtype=np.float32)
+        grayscale[:4, :4] = 0.9
+        grayscale[4:8, 4:8] = 0.2
+        grayscale[8:, 8:] = 0.5
+
+        targets, report_rows = split_grayscale_image_into_channel_tiles_with_report(
+            grayscale,
+            expected_channels=9,
+            tile_balance_strength=0.5,
+            tile_balance_clip=1.3,
+        )
+
+        self.assertEqual(targets.shape, (9, 12, 12))
+        tile_rows = [row for row in report_rows if row["stage"] == "tile"]
+        self.assertEqual(len(tile_rows), 9)
+        self.assertLess(float(targets[0].mean()), 0.9)
+        self.assertGreater(float(targets[4].mean()), 0.0)
+        self.assertIn("budget_scale", tile_rows[0])
+
     def test_generate_line_art_targets_returns_repeated_channel_stack(self):
         image_path = self._make_workspace_image_path("cross.png")
         image = Image.new("RGB", (24, 24), color=(0, 0, 0))
@@ -121,6 +143,25 @@ class TargetsTest(unittest.TestCase):
         self.assertLessEqual(float(targets.max()), 0.65)
         self.assertGreater(float(targets[8].mean()), float(targets[0].mean()))
         self.assertFalse(np.allclose(targets[0], targets[8]))
+
+    def test_generate_grayscale_target_artifacts_returns_report_and_stitched_target(self):
+        image_path = self._make_workspace_image_path("gradient.png")
+        image = Image.new("RGB", (30, 30), color=(0, 0, 0))
+        draw = ImageDraw.Draw(image)
+        for index in range(30):
+            value = min(255, 40 + index * 6)
+            draw.line((index, 0, index, 29), fill=(value, value, value), width=1)
+        image.save(image_path)
+
+        artifacts = generate_grayscale_target_artifacts(image_path, expected_channels=9, size=18)
+
+        self.assertEqual(artifacts.targets.shape, (9, 18, 18))
+        self.assertEqual(artifacts.stitched_target.shape, (18, 18))
+        self.assertEqual(artifacts.source_grayscale.shape, (18, 18))
+        self.assertEqual(artifacts.processed_grayscale.shape, (18, 18))
+        self.assertEqual(artifacts.report_rows[0]["stage"], "source")
+        self.assertEqual(artifacts.report_rows[1]["stage"], "processed")
+        self.assertEqual(len([row for row in artifacts.report_rows if row["stage"] == "tile"]), 9)
 
     def test_validate_targets_rejects_wrong_channel_count(self):
         targets = np.zeros((8, 16, 16), dtype=np.float32)

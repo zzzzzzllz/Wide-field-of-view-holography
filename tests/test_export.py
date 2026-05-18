@@ -11,6 +11,7 @@ import numpy as np
 
 from holo_opt.config import ExperimentConfig
 from holo_opt.export import export_results
+from holo_opt.line_targets import GrayscaleTargetArtifacts
 
 
 class ExportResultsTest(unittest.TestCase):
@@ -270,6 +271,60 @@ class ExportResultsTest(unittest.TestCase):
             self.assertGreater((run_dir / "loss_terms.png").stat().st_size, 0)
             self.assertGreater((run_dir / "outer_001_summary.png").stat().st_size, 0)
             self.assertGreater((run_dir / "outer_001_stitched_comparison.png").stat().st_size, 0)
+        finally:
+            shutil.rmtree(tmp_path, ignore_errors=True)
+
+    def test_export_results_writes_grayscale_preprocess_artifacts_when_provided(self):
+        tmp_path = Path.cwd() / "outputs" / "test_export" / uuid.uuid4().hex
+        tmp_path.mkdir(parents=True)
+        self.addCleanup(lambda: shutil.rmtree(tmp_path, ignore_errors=True))
+        tmp = str(tmp_path)
+        try:
+            config = ExperimentConfig(size=6, output_root=tmp, label="grayscale")
+            metrics = {
+                "rows": [
+                    {"channel": index + 1, "mse": 0.1, "eta": 0.5, "gray_level_error": 0.2, "gray_means": [0.0] * 16}
+                    for index in range(9)
+                ],
+                "summary": {
+                    "score": 1.0,
+                    "image_error": 0.1,
+                    "gray_level_error": 0.2,
+                    "efficiency_balance_penalty": 0.3,
+                    "mean_eta": 0.5,
+                },
+            }
+            grayscale_artifacts = GrayscaleTargetArtifacts(
+                source_grayscale=np.full((6, 6), 0.5, dtype=np.float32),
+                processed_grayscale=np.full((6, 6), 0.3, dtype=np.float32),
+                targets=np.full((9, 6, 6), 0.2, dtype=np.float32),
+                stitched_target=np.full((6, 6), 0.2, dtype=np.float32),
+                report_rows=[
+                    {"stage": "source", "tile": 0, "mean_intensity": 0.5},
+                    {"stage": "processed", "tile": 0, "mean_intensity": 0.3},
+                    {"stage": "tile", "tile": 1, "mean_intensity": 0.2, "budget_scale": 1.1},
+                ],
+            )
+
+            run_dir = export_results(
+                config,
+                np.ones((9, 6, 6), dtype=np.float32),
+                np.ones((9, 6, 6), dtype=np.float32),
+                np.zeros((6, 6), dtype=np.float32),
+                np.zeros((6, 6), dtype=np.float32),
+                [1.0],
+                [[0.5] * 9],
+                [[1.0] * 9],
+                metrics,
+                grayscale_artifacts=grayscale_artifacts,
+            )
+
+            self.assertGreater((run_dir / "preprocess_comparison.png").stat().st_size, 0)
+            with (run_dir / "target_energy_report.csv").open(newline="", encoding="utf-8") as handle:
+                rows = list(csv.reader(handle))
+            self.assertEqual(rows[0], ["stage", "tile", "mean_intensity", "budget_scale"])
+            self.assertEqual(rows[1], ["source", "0", "0.5", ""])
+            self.assertEqual(rows[3], ["tile", "1", "0.2", "1.1"])
         finally:
             shutil.rmtree(tmp_path, ignore_errors=True)
 
