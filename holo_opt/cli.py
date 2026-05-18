@@ -7,6 +7,7 @@ from collections.abc import Sequence
 
 from holo_opt.config import (
     ExperimentConfig,
+    GrayscalePreprocessConfig,
     GuidedModeConfig,
     LossConfig,
     PhysicalConfig,
@@ -43,6 +44,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gray-monotonic-weight", type=float, default=0.1)
     parser.add_argument("--phase-smoothness-weight", type=float, default=1e-4)
     parser.add_argument("--background-weight", type=float, default=0.0)
+    parser.add_argument("--grayscale-max-intensity", type=float, default=0.65)
+    parser.add_argument("--grayscale-gamma", type=float, default=1.6)
+    parser.add_argument("--grayscale-flat-darkening", type=float, default=0.55)
+    parser.add_argument("--grayscale-detail-boost", type=float, default=0.2)
+    parser.add_argument("--grayscale-tile-balance-strength", type=float, default=0.35)
+    parser.add_argument("--grayscale-tile-balance-clip", type=float, default=1.35)
     return parser
 
 
@@ -79,6 +86,14 @@ def config_from_args(args: argparse.Namespace) -> ExperimentConfig:
             gray_monotonic_weight=args.gray_monotonic_weight,
             phase_smoothness_weight=args.phase_smoothness_weight,
             background_weight=args.background_weight,
+        ),
+        grayscale_preprocess=GrayscalePreprocessConfig(
+            max_intensity=args.grayscale_max_intensity,
+            gamma=args.grayscale_gamma,
+            flat_region_darkening=args.grayscale_flat_darkening,
+            detail_boost=args.grayscale_detail_boost,
+            tile_balance_strength=args.grayscale_tile_balance_strength,
+            tile_balance_clip=args.grayscale_tile_balance_clip,
         ),
     )
 

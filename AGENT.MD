@@ -231,3 +231,11 @@ py -m holo_opt.cli --target-mode standard --size 64 --epochs-per-chunk 300 --out
 - 用户可见变化：正式运行可用 `py -m holo_opt.cli --target-mode grayscale --target-path inputs/lineart_sources/demo_preview.png --size 128 --device cpu`；预览可用 `py -m holo_opt.grayscale_preview --input demo_preview.png --size 64`，输出文件名为 `*_original.png` 和 `*_grayscale.png`。
 - 算法细节：灰度图不使用线稿路径里的 autocontrast 拉满动态范围，而是使用原始 RGB luminance，经过 gamma 压缩、最大亮度上限和低梯度区域压暗；默认最大亮度约为 `0.65`，大块平坦区域进一步乘以 `0.55` 附近的暗化系数。切块顺序为 row-major：左上、上中、右上、中左、中间、中右、左下、下中、右下；每个 tile resize 到 channel target 尺寸后参与优化。
 - 验证方式：已运行 `py -m unittest discover -s tests -q`，并执行灰度预览命令确认输出 `outputs/lineart_preview/demo_preview_grayscale.png`。
+
+## 2026-05-18 灰度预处理增强与输入适配诊断
+
+- 改动动机：仅靠全局 gamma 压缩和大块平坦区压暗，容易把局部细节一起压没，导致输入图在进入全息优化前已经丢掉轮廓层次；同时 3x3 切块后各通道亮度预算分配不透明，难以判断某张图是不是天然不适合当前固定能量设置。
+- 影响范围：`holo_opt/line_targets.py` 新增更强的灰度预处理链路、tile 预算均衡和 `GrayscaleTargetArtifacts` 诊断产物；`holo_opt/config.py`、`holo_opt/cli.py` 新增灰度预处理配置；`holo_opt/runner.py`、`holo_opt/export.py` 现在会在 `grayscale` 运行时额外导出 `preprocess_comparison.png` 与 `target_energy_report.csv`；`holo_opt/grayscale_preview.py` 改为复用正式 `grayscale` 预处理链路；相关测试已同步更新。
+- 用户可见变化：`grayscale` 模式现在支持 `--grayscale-max-intensity`、`--grayscale-gamma`、`--grayscale-flat-darkening`、`--grayscale-detail-boost`、`--grayscale-tile-balance-strength`、`--grayscale-tile-balance-clip` 六个调参入口；正式运行后可直接查看 `preprocess_comparison.png` 判断原图灰度、处理后灰度和 stitched target 的差异，再查看 `target_energy_report.csv` 判断 9 个 tile 的亮度预算是否过于失衡。
+- 算法细节：预处理先对非黑背景前景做稳健亮度归一化，再做 gamma 压缩；随后用 DoG 型局部细节信号把亮边缘和细节重新抬回来，避免“整体压暗后细节一起消失”；对低梯度大块区域仍保留压暗；最后在切成 3x3 tile 后，对非空 tile 做温和亮度预算均衡，减少个别 tile 过亮或过暗导致的单通道压力失衡。
+- 验证方式：已运行 `py -m unittest discover -s tests -q`；已执行 `py -m holo_opt.grayscale_preview --input outputs/tmp_preprocess_probe/probe.png --size 64 --output-dir outputs/tmp_preprocess_probe/preview`；已执行 `py -m holo_opt.cli --target-mode grayscale --target-path outputs/tmp_preprocess_probe/probe.png --size 16 --epochs-per-chunk 2 --outer-loops 1 --device cpu --output-root outputs/tmp_preprocess_probe/runs --label grayscale_probe`，确认导出 `preprocess_comparison.png` 和 `target_energy_report.csv`。

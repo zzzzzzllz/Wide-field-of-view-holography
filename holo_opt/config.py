@@ -57,6 +57,16 @@ class LossConfig:
 
 
 @dataclass
+class GrayscalePreprocessConfig:
+    max_intensity: float = 0.65
+    gamma: float = 1.6
+    flat_region_darkening: float = 0.55
+    detail_boost: float = 0.2
+    tile_balance_strength: float = 0.35
+    tile_balance_clip: float = 1.35
+
+
+@dataclass
 class ExperimentConfig:
     n_channels: int = 9
     size: int = 128
@@ -78,6 +88,7 @@ class ExperimentConfig:
     weight_update: WeightUpdateConfig = field(default_factory=WeightUpdateConfig)
     score: ScoreConfig = field(default_factory=ScoreConfig)
     loss: LossConfig = field(default_factory=LossConfig)
+    grayscale_preprocess: GrayscalePreprocessConfig = field(default_factory=GrayscalePreprocessConfig)
 
 
 def _all_positive(values: list[float]) -> bool:
@@ -174,6 +185,24 @@ def validate_config(config: ExperimentConfig) -> None:
     ]
     if not _all_nonnegative(loss_values):
         raise ValueError("loss weights must be nonnegative and finite")
+    preprocess = config.grayscale_preprocess
+    if not _all_positive(
+        [
+            preprocess.max_intensity,
+            preprocess.gamma,
+            preprocess.flat_region_darkening,
+            preprocess.tile_balance_clip,
+        ]
+    ):
+        raise ValueError("grayscale preprocess positive values must be positive and finite")
+    if not _all_nonnegative([preprocess.detail_boost, preprocess.tile_balance_strength]):
+        raise ValueError("grayscale preprocess boost values must be nonnegative and finite")
+    if preprocess.max_intensity > 1.0:
+        raise ValueError("grayscale preprocess max_intensity must be at most 1")
+    if preprocess.flat_region_darkening > 1.0:
+        raise ValueError("grayscale preprocess flat_region_darkening must be at most 1")
+    if preprocess.tile_balance_clip < 1.0:
+        raise ValueError("grayscale preprocess tile_balance_clip must be at least 1")
 
 
 def config_to_dict(config: ExperimentConfig) -> dict[str, Any]:

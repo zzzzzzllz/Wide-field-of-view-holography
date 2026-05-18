@@ -73,6 +73,11 @@
 
 目标：在进入全息优化前，把普通图片处理成更适合固定能量、多通道重建的 target。
 
+当前已落地的第一步：
+
+- `grayscale` 路径已经补上局部细节保留、低梯度区域压暗、3x3 tile 温和预算均衡，以及 `preprocess_comparison.png` / `target_energy_report.csv` 两类输入适配诊断。
+- 后续这条线继续推进时，不要重复实现基础灰度压缩，重点往 `preprocess_mode` 抽象、输入图可读报告增强和 `image2_assisted` 候选图生成上走。
+
 建议先做：
 
 - 形成 `preprocess_mode`：`none`、`grayscale_budget`、`lineart`、`image2_assisted`。

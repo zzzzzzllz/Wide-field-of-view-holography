@@ -368,7 +368,32 @@ py -m holo_opt.grayscale_preview --input demo_preview.png --size 64
 py -m holo_opt.cli --target-mode grayscale --target-path inputs/lineart_sources/demo_preview.png --size 128 --device cpu --output-root outputs/holo_experiments --label grayscale
 ```
 
-灰度路径会保留图像的大体明暗关系，但不会把大面积色块拉到纯白；默认会压低最大亮度，并让低梯度的大块区域更暗，给单通道固定亮度预算留余量。
+灰度路径会保留图像的大体明暗关系，但不会把大面积色块拉到纯白；现在除了压低最大亮度、压暗低梯度大块区域外，还会做局部细节回提和 3x3 tile 的温和亮度预算均衡，减少“整体压暗后边缘一起丢失”以及“某几个 tile 过亮、某几个 tile 过暗”的问题。
+
+如果你想手动调这条预处理链，可以在正式运行时追加这些参数：
+
+```powershell
+--grayscale-max-intensity 0.65
+--grayscale-gamma 1.6
+--grayscale-flat-darkening 0.55
+--grayscale-detail-boost 0.2
+--grayscale-tile-balance-strength 0.35
+--grayscale-tile-balance-clip 1.35
+```
+
+`grayscale` 正式运行现在还会额外导出：
+
+- `preprocess_comparison.png`
+  - 原始灰度图、处理后灰度图、stitched target 的并排对比
+- `target_energy_report.csv`
+  - 每个 tile 的均值亮度、峰值亮度、非零占比、预算缩放系数
+
+判断这次预处理是否真的更合适，优先看：
+
+1. `preprocess_comparison.png`
+2. `summary.png`
+3. `stitched_comparison.png`
+4. `target_energy_report.csv`
 
 正式 `grayscale` 优化不会把同一张图复制到 9 个通道，而是把处理后的灰度图按 3x3 切成 9 块，再按行优先顺序分配给 9 个 diffraction channel：
 

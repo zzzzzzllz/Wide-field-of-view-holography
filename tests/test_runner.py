@@ -162,6 +162,33 @@ class RunnerTest(unittest.TestCase):
         self.assertTrue((result.run_dir / "outer_001_summary.png").exists())
         self.assertTrue((result.run_dir / "outer_001_stitched_comparison.png").exists())
 
+    def test_run_experiment_grayscale_exports_preprocess_artifacts(self):
+        output_root = Path.cwd() / "outputs" / "test_runner" / uuid.uuid4().hex
+        output_root.mkdir(parents=True)
+        self.addCleanup(lambda: shutil.rmtree(output_root, ignore_errors=True))
+        image_path = output_root / "grayscale_input.png"
+        image = Image.new("RGB", (24, 24), color=(0, 0, 0))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((2, 2, 21, 21), fill=(200, 200, 200))
+        draw.line((2, 12, 21, 12), fill=(255, 255, 255), width=2)
+        image.save(image_path)
+
+        config = ExperimentConfig(
+            size=8,
+            epochs_per_chunk=1,
+            outer_loops=1,
+            target_mode="grayscale",
+            target_path=str(image_path),
+            output_root=str(output_root),
+            label="grayscale_diag",
+            device="cpu",
+        )
+
+        result = run_experiment(config)
+
+        self.assertTrue((result.run_dir / "preprocess_comparison.png").exists())
+        self.assertTrue((result.run_dir / "target_energy_report.csv").exists())
+
     def test_run_experiment_prints_progress_at_interval(self):
         output_root = Path.cwd() / "outputs" / "test_runner" / uuid.uuid4().hex
         output_root.mkdir(parents=True)

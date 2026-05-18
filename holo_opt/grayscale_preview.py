@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from holo_opt.line_targets import load_rgb_image_as_dimmed_square_grayscale
+from holo_opt.line_targets import generate_grayscale_target_artifacts
 from holo_opt.lineart_preview import DEFAULT_INPUT_DIR, resolve_input_path
 
 
@@ -39,8 +39,8 @@ def generate_grayscale_preview(
 
     shutil.copyfile(resolved_input, original_output)
 
-    grayscale = load_rgb_image_as_dimmed_square_grayscale(resolved_input, size=size)
-    image = Image.fromarray(np.uint8(np.clip(grayscale, 0.0, 1.0) * 255.0), mode="L")
+    artifacts = generate_grayscale_target_artifacts(resolved_input, size=size)
+    image = Image.fromarray(np.uint8(np.clip(artifacts.processed_grayscale, 0.0, 1.0) * 255.0), mode="L")
     image.save(processed_output)
 
     return original_output, processed_output
