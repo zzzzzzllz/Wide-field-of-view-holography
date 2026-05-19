@@ -212,6 +212,28 @@ class RunnerTest(unittest.TestCase):
 
         self.assertIn("step 2/2 loss=", output.getvalue())
 
+    def test_run_experiment_reports_device_and_elapsed_time(self):
+        output_root = Path.cwd() / "outputs" / "test_runner" / uuid.uuid4().hex
+        output_root.mkdir(parents=True)
+        self.addCleanup(lambda: shutil.rmtree(output_root, ignore_errors=True))
+
+        config = ExperimentConfig(
+            size=8,
+            epochs_per_chunk=1,
+            outer_loops=1,
+            output_root=str(output_root),
+            label="timing",
+            device="cpu",
+        )
+        output = io.StringIO()
+
+        with contextlib.redirect_stdout(output):
+            run_experiment(config)
+
+        text = output.getvalue()
+        self.assertIn("Device: cpu", text)
+        self.assertRegex(text, r"Run finished in \d+\.\d s")
+
     def test_run_experiment_diagnostics_record_rows_and_interval(self):
         output_root = Path.cwd() / "outputs" / "test_runner" / uuid.uuid4().hex
         output_root.mkdir(parents=True)
