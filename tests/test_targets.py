@@ -18,7 +18,13 @@ from holo_opt.line_targets import (
     split_grayscale_image_into_channel_tiles,
     split_grayscale_image_into_channel_tiles_with_report,
 )
-from holo_opt.targets import generate_gray_step_targets, load_mat_targets, normalize_array, validate_targets
+from holo_opt.targets import (
+    generate_direct_image_targets,
+    generate_gray_step_targets,
+    load_mat_targets,
+    normalize_array,
+    validate_targets,
+)
 
 
 class TargetsTest(unittest.TestCase):
@@ -122,6 +128,21 @@ class TargetsTest(unittest.TestCase):
         self.assertEqual(targets.dtype, np.float32)
         self.assertGreater(float(targets.max()), 0.0)
         self.assertAlmostEqual(float(targets.min()), 0.0)
+        np.testing.assert_allclose(targets[0], targets[1])
+
+    def test_generate_direct_image_targets_returns_repeated_channel_stack_without_extra_preprocessing(self):
+        image_path = self._make_workspace_image_path("direct.png")
+        image = Image.new("RGB", (24, 24), color=(0, 0, 0))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((4, 4, 20, 20), fill=(128, 128, 128))
+        image.save(image_path)
+
+        targets = generate_direct_image_targets(image_path, expected_channels=9, size=16)
+
+        self.assertEqual(targets.shape, (9, 16, 16))
+        self.assertEqual(targets.dtype, np.float32)
+        self.assertGreater(float(targets.max()), 0.0)
+        self.assertLess(float(targets.max()), 1.0)
         np.testing.assert_allclose(targets[0], targets[1])
 
     def test_generate_grayscale_image_targets_returns_dimmed_split_channel_stack(self):

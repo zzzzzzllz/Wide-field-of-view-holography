@@ -18,7 +18,7 @@ from holo_opt.line_targets import (
     generate_line_art_targets,
 )
 from holo_opt.metrics import evaluate_metrics
-from holo_opt.targets import generate_gray_step_targets, load_mat_targets, validate_targets
+from holo_opt.targets import generate_direct_image_targets, generate_gray_step_targets, load_mat_targets, validate_targets
 from holo_opt.weights import update_weights
 
 
@@ -68,6 +68,13 @@ def load_targets_bundle_for_config(config: ExperimentConfig) -> TargetLoadResult
             size=config.size,
         )
         return TargetLoadResult(targets=validate_targets(targets, expected_channels=config.n_channels))
+    elif config.target_mode == "image":
+        targets = generate_direct_image_targets(
+            config.target_path,
+            expected_channels=config.n_channels,
+            size=config.size,
+        )
+        return TargetLoadResult(targets=validate_targets(targets, expected_channels=config.n_channels))
     elif config.target_mode == "grayscale":
         artifacts = generate_grayscale_target_artifacts(
             config.target_path,
@@ -80,7 +87,7 @@ def load_targets_bundle_for_config(config: ExperimentConfig) -> TargetLoadResult
             grayscale_artifacts=artifacts,
         )
     else:
-        raise ValueError("target_mode must be standard, mat, lineart, or grayscale")
+        raise ValueError("target_mode must be standard, mat, lineart, grayscale, or image")
 
 
 def compute_score(summary: dict[str, object], score_config: ScoreConfig) -> float:

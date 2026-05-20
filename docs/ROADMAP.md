@@ -7,7 +7,7 @@
 项目当前已经具备：
 
 - 基于 FFT 的 9 通道全息优化主流程。
-- `standard`、`mat`、`lineart`、`grayscale` 四类 target 输入。
+- `standard`、`mat`、`lineart`、`grayscale`、`image` 五类 target 输入。
 - 结构化损失项：`image_mse`、`eta_balance`、`gray_monotonic`、`phase_smoothness`、`background`。
 - 诊断导出：`diagnostics.csv`、`loss_terms.csv`、`loss_terms.png`、`outer_###_summary.png`、`stitched_comparison.png`。
 - 仓库协作规范 skill：`skills/holography-workflow/SKILL.md`。

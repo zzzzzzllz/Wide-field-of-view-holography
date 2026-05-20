@@ -144,10 +144,10 @@ def validate_config(config: ExperimentConfig) -> None:
             raise ValueError("each pair_mat row must contain two integers")
         if not all(type(value) is int for value in row):
             raise ValueError("pair_mat values must be integers")
-    if config.target_mode not in {"standard", "mat", "lineart", "grayscale"}:
-        raise ValueError("target_mode must be standard, mat, lineart, or grayscale")
-    if config.target_mode in {"mat", "lineart", "grayscale"} and not config.target_path:
-        raise ValueError("target_path is required when target_mode is mat, lineart, or grayscale")
+    if config.target_mode not in {"standard", "mat", "lineart", "grayscale", "image"}:
+        raise ValueError("target_mode must be standard, mat, lineart, grayscale, or image")
+    if config.target_mode in {"mat", "lineart", "grayscale", "image"} and not config.target_path:
+        raise ValueError("target_path is required when target_mode is mat, lineart, grayscale, or image")
     if not _all_positive([config.physical.lambda_nm, config.physical.px_nm, config.physical.py_nm]):
         raise ValueError("physical values must be positive and finite")
     if not _all_positive([config.guided_mode.neff]):

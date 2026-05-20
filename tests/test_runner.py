@@ -49,6 +49,25 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(targets.dtype, np.float32)
         self.assertGreater(float(targets.max()), 0.0)
 
+    def test_load_targets_for_direct_image_config_returns_valid_shape(self):
+        temp_dir = Path.cwd() / "outputs" / "test_runner" / uuid.uuid4().hex
+        temp_dir.mkdir(parents=True, exist_ok=False)
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+        image_path = temp_dir / "direct.png"
+        image = Image.new("RGB", (24, 24), color=(0, 0, 0))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((5, 5, 19, 19), fill=(180, 180, 180))
+        image.save(image_path)
+
+        config = ExperimentConfig(size=8, target_mode="image", target_path=str(image_path))
+        targets = load_targets_for_config(config)
+
+        self.assertEqual(targets.shape, (9, 8, 8))
+        self.assertEqual(targets.dtype, np.float32)
+        self.assertGreater(float(targets.max()), 0.0)
+        self.assertLess(float(targets.max()), 1.0)
+        self.assertTrue(np.allclose(targets[0], targets[4]))
+
     def test_load_targets_for_grayscale_config_returns_valid_shape(self):
         temp_dir = Path.cwd() / "outputs" / "test_runner" / uuid.uuid4().hex
         temp_dir.mkdir(parents=True, exist_ok=False)

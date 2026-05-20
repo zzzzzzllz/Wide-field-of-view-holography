@@ -124,7 +124,7 @@ py -m unittest discover -s tests -q
 
 ## Target 模式
 
-当前支持 3 种 target 模式。
+当前支持 5 种 target 模式。
 
 ### 1. `standard`
 
@@ -160,6 +160,23 @@ py -m unittest discover -s tests -q
 
 - 先从轮廓图开始做远场结构优化
 - 快速验证一个图案是否适合进入优化阶段
+
+### 4. `grayscale`
+
+把普通 RGB 图片转成经过亮度预算压缩后的灰度 target，并按 3x3 切块分给 9 个通道。
+
+适合：
+- 想利用预处理先压制大块亮区和能量失衡
+- 先优化输入图适配，再进入多通道重建
+
+### 5. `image`
+
+把普通 RGB 图片直接转成正方形灰度图，然后原样复制到 9 个通道，不走 `lineart` 提轮廓，也不走 `grayscale` 亮度预算预处理。
+
+适合：
+- 单独观察算法本体对原图的适配能力
+- 对比“无预处理直入”与 `lineart` / `grayscale` 的差异
+- 分析 speckle、亮块不均匀这些问题是不是来自核心优化器，而不是来自输入预处理
 
 ## 最常用的 4 条命令
 
@@ -392,6 +409,12 @@ py -m holo_opt.grayscale_preview --input demo_preview.png --size 128 --preset ba
 
 ```powershell
 py -m holo_opt.cli --target-mode grayscale --target-path inputs/lineart_sources/demo_preview.png --size 128 --device cpu --output-root outputs/holo_experiments --label grayscale
+```
+
+如果你想跳过任何图像预处理，直接把原图送进优化流程，可以用：
+
+```powershell
+py -m holo_opt.cli --target-mode image --target-path D:/path/to/input.png --size 128 --device cpu --output-root outputs/holo_experiments --label image
 ```
 
 灰度路径会保留图像的大体明暗关系，但不会把大面积色块拉到纯白；现在除了压低最大亮度、压暗低梯度大块区域外，还会做局部细节回提和 3x3 tile 的温和亮度预算均衡，减少“整体压暗后边缘一起丢失”以及“某几个 tile 过亮、某几个 tile 过暗”的问题。

@@ -151,6 +151,24 @@ class CliTest(unittest.TestCase):
         self.assertEqual(config.grayscale_preprocess.tile_balance_strength, 0.25)
         self.assertEqual(config.grayscale_preprocess.tile_balance_clip, 1.2)
 
+    def test_config_from_args_supports_direct_image_target_mode(self):
+        args = build_parser().parse_args(
+            [
+                "--target-mode",
+                "image",
+                "--target-path",
+                "direct.png",
+                "--size",
+                "96",
+            ]
+        )
+
+        config = config_from_args(args)
+
+        self.assertEqual(config.target_mode, "image")
+        self.assertEqual(config.target_path, "direct.png")
+        self.assertEqual(config.size, 96)
+
 
 if __name__ == "__main__":
     unittest.main()

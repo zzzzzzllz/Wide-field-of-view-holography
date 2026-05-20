@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+from PIL import Image, ImageOps
 from scipy.io import loadmat
 
 
@@ -37,6 +38,52 @@ def generate_gray_step_targets(n_channels: int = 9, size: int = 128, levels: int
         shift_x = (channel // 3) * max(1, size // 16)
         targets.append(np.roll(np.roll(base, shift_y, axis=0), shift_x, axis=1))
     return np.stack(targets, axis=0).astype(np.float32)
+
+
+def _resampling_lanczos() -> int:
+    if hasattr(Image, "Resampling"):
+        return Image.Resampling.LANCZOS
+    return Image.LANCZOS
+
+
+def load_rgb_image_as_square_grayscale(path: str | Path, size: int) -> np.ndarray:
+    """Load an RGB image, preserve aspect ratio, pad to square, and convert to grayscale without extra preprocessing."""
+    if type(size) is not int or size <= 0:
+        raise ValueError("size must be a positive integer")
+    image_path = Path(path)
+    if not image_path.exists():
+        raise FileNotFoundError(str(image_path))
+
+    with Image.open(image_path) as source:
+        image = ImageOps.exif_transpose(source).convert("RGB")
+
+    scale = min(size / image.width, size / image.height)
+    resized_width = max(1, int(round(image.width * scale)))
+    resized_height = max(1, int(round(image.height * scale)))
+    resized = image.resize((resized_width, resized_height), resample=_resampling_lanczos())
+
+    canvas = Image.new("RGB", (size, size), color=(0, 0, 0))
+    offset_x = (size - resized_width) // 2
+    offset_y = (size - resized_height) // 2
+    canvas.paste(resized, (offset_x, offset_y))
+    grayscale = np.asarray(canvas.convert("L"), dtype=np.float32) / 255.0
+    if not np.any(grayscale > 0.0):
+        raise ValueError("direct image target generation produced an empty image")
+    return grayscale.astype(np.float32)
+
+
+def generate_direct_image_targets(
+    path: str | Path,
+    *,
+    expected_channels: int = 9,
+    size: int = 128,
+) -> np.ndarray:
+    """Repeat one directly loaded grayscale image across all channels without extra preprocessing."""
+    if type(expected_channels) is not int or expected_channels <= 0:
+        raise ValueError("expected_channels must be a positive integer")
+    grayscale = load_rgb_image_as_square_grayscale(path, size)
+    target_stack = np.repeat(grayscale[np.newaxis, :, :], expected_channels, axis=0)
+    return target_stack.astype(np.float32)
 
 
 def validate_targets(targets: np.ndarray, expected_channels: int) -> np.ndarray:

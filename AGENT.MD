@@ -95,7 +95,7 @@
 
 - 已落地能力：
   - `LossConfig` 和 `diagnostic_interval` 已进入配置层。
-  - target 侧已支持 3 种输入模式：`standard`、`mat`、`lineart`。
+  - target 侧已支持 5 种输入模式：`standard`、`mat`、`lineart`、`grayscale`、`image`。
   - `field.py` 已支持结构化损失项：`image_mse`、`eta_balance`、`gray_monotonic`、`phase_smoothness`、`background`。
   - `runner.py` 已记录 `loss_terms_history`、`diagnostics`、`outer_summaries`，并按 score 选最优状态。
   - `export.py` 已导出 `diagnostics.csv`、`loss_terms.csv`、`loss_terms.png`、`outer_###_summary.png`。
@@ -248,3 +248,11 @@ py -m holo_opt.cli --target-mode standard --size 64 --epochs-per-chunk 300 --out
 - 用户可见变化：现在可直接运行 `py -m holo_opt.grayscale_preview --input demo_preview.png --size 128 --preset balanced detail budget`，只看 `source RGB`、`source grayscale` 和三种处理结果的并排对比，不需要先进入 target 切块或正式优化。
 - 算法细节：`balanced` 使用当前默认参数；`detail` 提高局部细节回提和亮区保留；`budget` 更强调压低峰值亮度和收紧 tile 预算波动。`*_preview_report.json` 会汇总每个 preset 的整体均值亮度、边缘密度、平坦区比例，以及 tile 预算缩放范围，方便在不跑优化的情况下先做输入图筛选。
 - 验证方式：已运行 `py -m unittest tests.test_grayscale_preview -q` 和 `py -m unittest discover -s tests -q`；已执行 `py -m holo_opt.grayscale_preview --input outputs/tmp_preprocess_probe/probe.png --size 64 --preset balanced detail budget --output-dir outputs/tmp_preprocess_probe/preview_multi`，确认输出多张 preset 处理图、对比图和 JSON 报告。
+
+## 2026-05-20 直接图像 target 模式
+
+- 改动动机：当前 `lineart` 会提轮廓，`grayscale` 会做亮度预算压缩和 3x3 切块；当需要单独观察“算法本体对原始目标图的适配能力”时，需要一个完全跳过这些预处理的直入模式。
+- 影响范围：`holo_opt/targets.py` 新增 `generate_direct_image_targets()` 和基础 RGB 转正方形灰度加载逻辑；`holo_opt/config.py`、`holo_opt/cli.py`、`holo_opt/runner.py` 接入新的 `target_mode=\"image\"`；`tests/test_targets.py`、`tests/test_cli.py`、`tests/test_runner.py` 补充覆盖。
+- 用户可见变化：现在可直接运行 `py -m holo_opt.cli --target-mode image --target-path D:/path/to/input.png --size 128 --device cpu`，把普通图片转成正方形灰度图后复制到 9 个通道，不走 `lineart` 取线条，也不走 `grayscale` 亮度预算预处理。
+- 算法细节：`image` 模式只做 3 件事：保宽高比缩放、黑底补边到正方形、转灰度；之后把同一张灰度目标图重复给所有 channel，所以它适合拿来隔离分析“当前 FFT 多通道优化器本身会不会出 speckle、会不会难以铺出均匀亮块”。
+- 验证方式：已运行 `py -m unittest tests.test_targets tests.test_cli tests.test_runner -q`；已执行 `py -m holo_opt.cli --target-mode image --target-path outputs/tmp_line_targets/simple_line_target.png --size 16 --epochs-per-chunk 2 --outer-loops 1 --device cpu --output-root outputs/tmp_line_targets/smoke --label image_smoke` 验证流程可跑通。

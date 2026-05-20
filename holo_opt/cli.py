@@ -19,7 +19,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run 9-channel grayscale holography optimization."
     )
-    parser.add_argument("--target-mode", choices=["standard", "mat", "lineart", "grayscale"], default="standard")
+    parser.add_argument("--target-mode", choices=["standard", "mat", "lineart", "grayscale", "image"], default="standard")
     parser.add_argument("--target-path", default=None)
     parser.add_argument("--mat-variable", default="bw_all")
     parser.add_argument("--size", type=int, default=128)
