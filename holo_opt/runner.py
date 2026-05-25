@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -119,6 +120,8 @@ def format_progress_message(step: int, total_steps: int, loss_value: float) -> s
 def run_experiment(config: ExperimentConfig) -> ExperimentResult:
     validate_config(config)
     device = resolve_device(config.device)
+    print(f"Device: {device.type}", flush=True)
+    started_at = time.perf_counter()
     torch.manual_seed(config.seed)
     if device.type == "cuda":
         torch.cuda.manual_seed_all(config.seed)
@@ -161,19 +164,22 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
     best_score = float("inf")
     best_state: dict[str, Any] | None = None
     total_steps = config.outer_loops * config.epochs_per_chunk
+    loss_weights = loss_config_to_dict(config)
+    loss_term_names = ("total", "image_mse", "eta_balance", "gray_monotonic", "phase_smoothness", "background")
 
     # Stage 3: optimize the proxy structure so that every configured channel
     # produces a far-field image close to its own target image.
     for _outer_index in range(config.outer_loops):
         for _epoch_index in range(config.epochs_per_chunk):
-            optimizer.zero_grad()
-            terms = compute_loss_terms(phdx, phdy, pair_mat, targets, weights, loss_config_to_dict(config))
+            optimizer.zero_grad(set_to_none=True)
+            terms = compute_loss_terms(phdx, phdy, pair_mat, targets, weights, loss_weights)
             loss = terms["total"]
             if not torch.isfinite(loss).item():
                 raise RuntimeError("non-finite loss encountered")
             loss.backward()
             optimizer.step()
-            loss_value = float(loss.detach().cpu().item())
+            term_values = torch.stack([terms[name].detach() for name in loss_term_names]).cpu().tolist()
+            loss_value = float(term_values[0])
             losses.append(loss_value)
             progress_message = format_progress_message(len(losses), total_steps, loss_value)
             if progress_message is not None:
@@ -181,11 +187,11 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
             loss_terms_history.append({
                 "step": float(len(losses)),
                 "total": loss_value,
-                "image_mse": float(terms["image_mse"].detach().cpu().item()),
-                "eta_balance": float(terms["eta_balance"].detach().cpu().item()),
-                "gray_monotonic": float(terms["gray_monotonic"].detach().cpu().item()),
-                "phase_smoothness": float(terms["phase_smoothness"].detach().cpu().item()),
-                "background": float(terms["background"].detach().cpu().item()),
+                "image_mse": float(term_values[1]),
+                "eta_balance": float(term_values[2]),
+                "gray_monotonic": float(term_values[3]),
+                "phase_smoothness": float(term_values[4]),
+                "background": float(term_values[5]),
             })
 
         with torch.no_grad():
@@ -257,6 +263,10 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
         outer_summaries=outer_summaries,
         grayscale_artifacts=target_bundle.grayscale_artifacts,
     )
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    elapsed_seconds = time.perf_counter() - started_at
+    print(f"Run finished in {elapsed_seconds:.1f} s", flush=True)
     return ExperimentResult(
         run_dir=run_dir,
         final_intensities=best_state["intensities"],

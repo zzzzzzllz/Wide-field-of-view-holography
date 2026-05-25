@@ -16,15 +16,10 @@ def compute_intensities(phdx: torch.Tensor, phdy: torch.Tensor, pair_mat: torch.
     """Simulate one far-field intensity image per diffraction-channel pair."""
     if phdx.shape != phdy.shape:
         raise ValueError("phdx and phdy must have the same shape")
-    channels = []
-    for channel in range(pair_mat.shape[0]):
-        m = pair_mat[channel, 0]
-        n = pair_mat[channel, 1]
-        phase = m * phdx + n * phdy
-        field = torch.exp(1j * phase)
-        spectrum = fftshift2(fft.fft2(field))
-        channels.append(torch.abs(spectrum) ** 2)
-    return torch.stack(channels, dim=0)
+    phase = pair_mat[:, 0, None, None] * phdx + pair_mat[:, 1, None, None] * phdy
+    field = torch.exp(1j * phase)
+    spectrum = fftshift2(fft.fft2(field))
+    return torch.abs(spectrum) ** 2
 
 
 def normalize_intensities(intensities: torch.Tensor, epsilon: float = 1e-8) -> torch.Tensor:
@@ -66,20 +61,28 @@ def gray_monotonic_loss(reconstruction: torch.Tensor, targets: torch.Tensor, lev
     if reconstruction.shape != targets.shape:
         raise ValueError("reconstruction and targets must have the same shape")
 
-    penalties = []
+    channels = targets.shape[0]
     level_indices = torch.round(torch.clamp(targets, 0.0, 1.0) * float(levels - 1)).long()
-    for channel in range(targets.shape[0]):
-        means = []
-        for level in range(levels):
-            mask = level_indices[channel] == level
-            if torch.any(mask):
-                means.append(reconstruction[channel][mask].mean())
-        if len(means) >= 2:
-            means_tensor = torch.stack(means)
-            penalties.append(torch.relu(-(means_tensor[1:] - means_tensor[:-1])).mean())
-    if not penalties:
+    channel_offsets = torch.arange(channels, device=targets.device).view(channels, 1, 1) * levels
+    flat_bins = (level_indices + channel_offsets).reshape(-1)
+    flat_reconstruction = reconstruction.reshape(-1)
+    bin_count = channels * levels
+    sums = torch.zeros(bin_count, device=reconstruction.device, dtype=reconstruction.dtype)
+    counts = torch.zeros(bin_count, device=reconstruction.device, dtype=reconstruction.dtype)
+    sums.scatter_add_(0, flat_bins, flat_reconstruction)
+    counts.scatter_add_(0, flat_bins, torch.ones_like(flat_reconstruction))
+
+    means = (sums / counts.clamp_min(1.0)).reshape(channels, levels)
+    valid = (counts.reshape(channels, levels) > 0)
+    valid_pairs = valid[:, 1:] & valid[:, :-1]
+    if not torch.any(valid_pairs):
         return reconstruction.new_tensor(0.0)
-    return torch.stack(penalties).mean()
+    penalties = torch.relu(-(means[:, 1:] - means[:, :-1]))
+    channel_penalty_sums = torch.where(valid_pairs, penalties, torch.zeros_like(penalties)).sum(dim=1)
+    channel_pair_counts = valid_pairs.sum(dim=1)
+    channels_with_pairs = channel_pair_counts > 0
+    channel_penalties = channel_penalty_sums[channels_with_pairs] / channel_pair_counts[channels_with_pairs].to(reconstruction.dtype)
+    return channel_penalties.mean()
 
 
 def channel_energy_balance_loss(

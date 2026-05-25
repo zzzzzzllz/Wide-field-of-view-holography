@@ -108,6 +108,24 @@ class FieldTest(unittest.TestCase):
 
         self.assertGreater(float(gray_monotonic_loss(bad, target)), float(gray_monotonic_loss(good, target)))
 
+    def test_gray_monotonic_loss_averages_per_channel_valid_level_pairs(self):
+        targets = torch.tensor(
+            [
+                [[0.0, 0.0], [1.0, 1.0]],
+                [[0.0, 0.5], [1.0, 1.0]],
+            ],
+            dtype=torch.float32,
+        )
+        reconstruction = torch.tensor(
+            [
+                [[1.0, 1.0], [0.0, 0.0]],
+                [[0.0, 0.8], [0.4, 0.4]],
+            ],
+            dtype=torch.float32,
+        )
+
+        self.assertAlmostEqual(float(gray_monotonic_loss(reconstruction, targets, levels=3)), 0.2)
+
     def test_channel_energy_balance_uses_useful_region_efficiency_when_targets_provided(self):
         intensities = torch.tensor(
             [

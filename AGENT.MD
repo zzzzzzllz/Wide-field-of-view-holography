@@ -248,3 +248,11 @@ py -m holo_opt.cli --target-mode standard --size 64 --epochs-per-chunk 300 --out
 - 用户可见变化：现在可直接运行 `py -m holo_opt.grayscale_preview --input demo_preview.png --size 128 --preset balanced detail budget`，只看 `source RGB`、`source grayscale` 和三种处理结果的并排对比，不需要先进入 target 切块或正式优化。
 - 算法细节：`balanced` 使用当前默认参数；`detail` 提高局部细节回提和亮区保留；`budget` 更强调压低峰值亮度和收紧 tile 预算波动。`*_preview_report.json` 会汇总每个 preset 的整体均值亮度、边缘密度、平坦区比例，以及 tile 预算缩放范围，方便在不跑优化的情况下先做输入图筛选。
 - 验证方式：已运行 `py -m unittest tests.test_grayscale_preview -q` 和 `py -m unittest discover -s tests -q`；已执行 `py -m holo_opt.grayscale_preview --input outputs/tmp_preprocess_probe/probe.png --size 64 --preset balanced detail budget --output-dir outputs/tmp_preprocess_probe/preview_multi`，确认输出多张 preset 处理图、对比图和 JSON 报告。
+
+## 2026-05-19 训练设备与耗时输出、速度优化
+
+- 改动动机：正式优化运行时需要直接在终端看到实际使用的是 `cuda` 还是 `cpu`，并在结束时看到总耗时；同时当前训练循环在小尺寸上比参考脚本慢很多，主要瓶颈来自逐通道 FFT 循环和灰阶单调损失里的多层 Python/mask 循环。
+- 影响范围：`holo_opt/runner.py` 增加实际设备打印、运行耗时统计和 CUDA 同步计时，并把每步损失分项的 CPU 同步合并；`holo_opt/field.py` 将 `compute_intensities()` 改为批量 FFT，将 `gray_monotonic_loss()` 改为 `scatter_add_` 聚合；`tests/test_field.py` 和 `tests/test_runner.py` 增加对应覆盖。
+- 用户可见变化：每次运行 `py -m holo_opt.cli ...` 时，开始阶段会打印 `Device: cuda` 或 `Device: cpu`；导出完成后会打印 `Run finished in X.X s`。原有导出文件名、CSV/PNG/NPZ 内容约定不变。
+- 算法细节：远场强度计算现在一次构造 `(channels, H, W)` phase stack 并批量执行 FFT，避免每个通道单独调用 FFT；灰阶单调损失按通道和灰阶 bin 聚合均值，只比较相邻且实际存在像素的灰阶对，不再跨过缺失灰阶比较。训练循环继续完整记录 `loss_terms.csv`，但减少了每步反复 `.cpu().item()` 带来的同步开销。
+- 验证方式：需要运行 `py -m unittest discover -s tests -q`；建议再运行 `py -m holo_opt.cli --target-mode standard --size 64 --epochs-per-chunk 3 --outer-loops 1 --device cpu --output-root outputs/holo_experiments --label timing_smoke`。如果本机 CUDA 可用，再运行同等 `--device cuda` smoke，确认终端显示 `Device: cuda` 且流程完成。
