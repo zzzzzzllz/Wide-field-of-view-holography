@@ -29,6 +29,18 @@ def normalize_intensities(intensities: torch.Tensor, epsilon: float = 1e-8) -> t
     return torch.where(nonzero_channels, intensities / safe_max_values, torch.zeros_like(intensities))
 
 
+def match_target_energy(intensities: torch.Tensor, targets: torch.Tensor, epsilon: float = 1e-8) -> torch.Tensor:
+    intensities = _as_channel_tensor(intensities, "intensities")
+    targets = _as_channel_tensor(targets, "targets")
+    if intensities.shape != targets.shape:
+        raise ValueError("intensities and targets must have the same shape")
+
+    intensity_energy = intensities.sum(dim=(-2, -1), keepdim=True)
+    target_energy = targets.sum(dim=(-2, -1), keepdim=True)
+    safe_energy = intensity_energy.clamp_min(epsilon)
+    return intensities / safe_energy * target_energy
+
+
 def _as_channel_tensor(values: torch.Tensor, name: str) -> torch.Tensor:
     if values.ndim == 2:
         return values.unsqueeze(0)
@@ -140,7 +152,8 @@ def compute_loss_terms(
     normalized_intensity = normalize_intensities(intensities, epsilon=epsilon)
     target_max = targets.amax(dim=(-2, -1), keepdim=True)
     normalized_target = targets / (target_max + epsilon)
-    per_channel = ((normalized_intensity - normalized_target) ** 2).mean(dim=(-2, -1))
+    energy_matched_intensity = match_target_energy(intensities, targets, epsilon=epsilon)
+    per_channel = ((energy_matched_intensity - targets) ** 2).mean(dim=(-2, -1))
     image_mse = torch.sum(weights * per_channel)
     eta_balance = channel_energy_balance_loss(intensities, normalized_target, epsilon=epsilon)
     gray_monotonic = gray_monotonic_loss(normalized_intensity, normalized_target)

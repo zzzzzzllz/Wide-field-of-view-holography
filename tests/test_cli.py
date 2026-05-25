@@ -48,6 +48,7 @@ class CliTest(unittest.TestCase):
                 "--alpha-deg", "-10",
                 "--weight-alpha", "0.25",
                 "--weight-beta", "0.75",
+                "--selection-metric", "image_error",
             ]
         )
 
@@ -72,6 +73,7 @@ class CliTest(unittest.TestCase):
         self.assertEqual(config.guided_mode.alpha_deg, -10.0)
         self.assertEqual(config.weight_update.alpha, 0.25)
         self.assertEqual(config.weight_update.beta, 0.75)
+        self.assertEqual(config.selection_metric, "image_error")
 
     def test_parser_exposes_loss_weight_options(self):
         args = build_parser().parse_args(

@@ -7,9 +7,10 @@
 项目当前已经具备：
 
 - 基于 FFT 的 9 通道全息优化主流程。
-- `standard`、`mat`、`lineart`、`grayscale` 四类 target 输入。
-- 结构化损失项：`image_mse`、`eta_balance`、`gray_monotonic`、`phase_smoothness`、`background`。
+- `standard`、`mat`、`lineart`、`grayscale` 四类 target 输入；`grayscale` 使用 3x3 切块分配到 9 个通道。
+- 结构化损失项：`image_mse`、`eta_balance`、`gray_monotonic`、`phase_smoothness`、`background`；其中 `image_mse` 使用按 target 总能量匹配后的强度图。
 - 诊断导出：`diagnostics.csv`、`loss_terms.csv`、`loss_terms.png`、`outer_###_summary.png`、`stitched_comparison.png`。
+- 多 seed 批处理入口：`holo_opt.batch` 会逐个 seed 运行实验，并导出 `seed_summary.csv` 供选择 best run。
 - 仓库协作规范 skill：`skills/holography-workflow/SKILL.md`。
 - 输入输出目录规则：`inputs/` 和 `outputs/` 只保留 `.gitkeep`，不提交实验图片或结果。
 
@@ -75,7 +76,10 @@
 
 当前已落地的第一步：
 
+- `holo_opt.batch` 已支持多个 seed 自动运行，生成 `seed_summary.csv` 并标出最低 score 的 best seed。
+- `image_mse` 已从按最大像素归一化改为按 target 总能量匹配强度后再计算 MSE，优先压制“loss 下降但 summary 仍是雪花噪声”的失败模式。
 - `grayscale` 路径已经补上局部细节保留、低梯度区域压暗、3x3 tile 温和预算均衡，以及 `preprocess_comparison.png` / `target_energy_report.csv` 两类输入适配诊断。
+- best state 选择现在支持 `--selection-metric image_error`，用于 MSE 优先实验，避免综合 `score` 把灰阶和效率目标混入最终 outer 选择。
 - 后续这条线继续推进时，不要重复实现基础灰度压缩，重点往 `preprocess_mode` 抽象、输入图可读报告增强和 `image2_assisted` 候选图生成上走。
 
 建议先做：

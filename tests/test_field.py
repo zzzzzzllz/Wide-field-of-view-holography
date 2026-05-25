@@ -65,6 +65,28 @@ class FieldTest(unittest.TestCase):
 
         self.assertAlmostEqual(float(loss.item()), 5.0)
 
+    def test_compute_loss_terms_matches_reconstruction_energy_to_target_energy_for_image_mse(self):
+        phdx = torch.zeros((2, 2), dtype=torch.float32)
+        phdy = torch.zeros((2, 2), dtype=torch.float32)
+        pair_mat = torch.tensor([[1.0, 0.0]], dtype=torch.float32)
+        targets = torch.tensor([[[0.0, 0.0], [1.0, 1.0]]], dtype=torch.float32)
+        intensities = torch.tensor([[[0.0, 2.0], [6.0, 2.0]]], dtype=torch.float32)
+        weights = torch.ones(1, dtype=torch.float32)
+
+        with patch("holo_opt.field.compute_intensities", return_value=intensities):
+            terms = compute_loss_terms(
+                phdx,
+                phdy,
+                pair_mat,
+                targets,
+                weights,
+                {"eta_balance_weight": 0.0, "gray_monotonic_weight": 0.0, "phase_smoothness_weight": 0.0},
+            )
+
+        expected_reconstruction = intensities / intensities.sum(dim=(-2, -1), keepdim=True) * targets.sum()
+        expected_mse = torch.mean((expected_reconstruction - targets) ** 2)
+        self.assertAlmostEqual(float(terms["image_mse"].item()), float(expected_mse.item()))
+
     def test_compute_loss_terms_returns_finite_terms(self):
         phdx = torch.zeros((4, 4), dtype=torch.float32)
         phdy = torch.zeros((4, 4), dtype=torch.float32)

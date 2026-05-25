@@ -101,6 +101,15 @@ def apply_score_config(metrics: dict[str, object], score_config: ScoreConfig) ->
     return metrics
 
 
+def selection_metric_value(metrics: dict[str, object], metric_name: str) -> float:
+    summary = metrics["summary"]
+    if not isinstance(summary, dict):
+        raise ValueError("metrics summary must be a dictionary")
+    if metric_name not in summary:
+        raise ValueError(f"selection metric not found: {metric_name}")
+    return float(summary[metric_name])
+
+
 def loss_config_to_dict(config: ExperimentConfig) -> dict[str, float]:
     return {
         "image_weight": config.loss.image_weight,
@@ -200,6 +209,7 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
             raise RuntimeError("non-finite intensities encountered")
         metrics = apply_score_config(evaluate_metrics(intensities_np, targets_np), config.score)
         score = float(metrics["summary"]["score"])  # type: ignore[index]
+        selection_value = selection_metric_value(metrics, config.selection_metric)
         outer_number = _outer_index + 1
         summary = metrics["summary"]  # type: ignore[assignment]
         diagnostics.append({
@@ -215,8 +225,8 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
         })
         if outer_number % config.diagnostic_interval == 0:
             outer_summaries.append((outer_number, intensities_np.copy()))
-        if np.isfinite(score) and score < best_score:
-            best_score = score
+        if np.isfinite(selection_value) and selection_value < best_score:
+            best_score = selection_value
             best_state = {
                 "intensities": intensities_np.copy(),
                 "phdx": phdx.detach().cpu().numpy().astype(np.float32).copy(),

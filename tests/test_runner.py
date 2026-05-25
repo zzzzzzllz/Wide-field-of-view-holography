@@ -5,6 +5,7 @@ import shutil
 import uuid
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import torch
@@ -263,6 +264,69 @@ class RunnerTest(unittest.TestCase):
         self.assertFalse((result.run_dir / "outer_001_stitched_comparison.png").exists())
         self.assertTrue((result.run_dir / "outer_002_summary.png").exists())
         self.assertTrue((result.run_dir / "outer_002_stitched_comparison.png").exists())
+
+    def test_run_experiment_selects_best_state_by_configured_metric(self):
+        output_root = Path.cwd() / "outputs" / "test_runner" / uuid.uuid4().hex
+        output_root.mkdir(parents=True)
+        self.addCleanup(lambda: shutil.rmtree(output_root, ignore_errors=True))
+
+        rows = [
+            {
+                "channel": index + 1,
+                "mse": 0.0,
+                "eta": 1.0,
+                "gray_level_error": 0.0,
+                "gray_means": [0.0] * 16,
+            }
+            for index in range(9)
+        ]
+        metrics_by_outer = [
+            {
+                "rows": rows,
+                "summary": {
+                    "score": -1.0,
+                    "image_error": 0.5,
+                    "gray_level_error": 0.0,
+                    "efficiency_balance_penalty": 0.0,
+                    "mean_eta": 1.0,
+                },
+            },
+            {
+                "rows": rows,
+                "summary": {
+                    "score": 1.0,
+                    "image_error": 0.1,
+                    "gray_level_error": 0.0,
+                    "efficiency_balance_penalty": 0.0,
+                    "mean_eta": 1.0,
+                },
+            },
+        ]
+        exported_metrics = []
+
+        def fake_export_results(*args, **kwargs):
+            exported_metrics.append(args[8])
+            run_dir = output_root / "fake_export"
+            run_dir.mkdir(exist_ok=True)
+            return run_dir
+
+        config = ExperimentConfig(
+            size=8,
+            epochs_per_chunk=1,
+            outer_loops=2,
+            output_root=str(output_root),
+            label="select_image_error",
+            device="cpu",
+            selection_metric="image_error",
+        )
+
+        with patch("holo_opt.runner.evaluate_metrics", side_effect=metrics_by_outer), patch(
+            "holo_opt.runner.export_results", side_effect=fake_export_results
+        ):
+            result = run_experiment(config)
+
+        self.assertEqual(result.final_metrics["summary"]["image_error"], 0.1)
+        self.assertEqual(exported_metrics[0]["summary"]["image_error"], 0.1)
 
 
 if __name__ == "__main__":

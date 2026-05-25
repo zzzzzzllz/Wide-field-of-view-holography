@@ -31,6 +31,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-root", default="outputs/holo_experiments")
     parser.add_argument("--label", default="quick9")
     parser.add_argument("--diagnostic-interval", type=int, default=1)
+    parser.add_argument(
+        "--selection-metric",
+        choices=["score", "image_error", "gray_level_error", "efficiency_balance_penalty"],
+        default="score",
+    )
     parser.add_argument("--lambda-nm", type=float, default=532.0)
     parser.add_argument("--px-nm", type=float, default=830.0)
     parser.add_argument("--py-nm", type=float, default=830.0)
@@ -67,6 +72,7 @@ def config_from_args(args: argparse.Namespace) -> ExperimentConfig:
         output_root=args.output_root,
         label=args.label,
         diagnostic_interval=args.diagnostic_interval,
+        selection_metric=args.selection_metric,
         physical=PhysicalConfig(
             lambda_nm=args.lambda_nm,
             px_nm=args.px_nm,

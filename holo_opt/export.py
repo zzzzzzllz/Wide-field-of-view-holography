@@ -269,6 +269,8 @@ def _plot_loss_terms(path: Path, loss_terms_history: list[dict[str, float]]) -> 
     fig, ax = plt.subplots(figsize=(7.0, 4.5))
     try:
         for term in terms:
+            if term not in loss_terms_history[0]:
+                continue
             values = np.asarray([row[term] for row in loss_terms_history], dtype=np.float32)
             ax.plot(steps, values, linewidth=1.5, label=term)
         ax.set_xlabel("Step")

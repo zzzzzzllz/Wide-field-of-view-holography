@@ -41,6 +41,16 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(data["n_channels"], 9)
         self.assertEqual(data["pair_mat"][0], [-2, 2])
         self.assertEqual(data["physical"]["lambda_nm"], 532.0)
+        self.assertEqual(data["selection_metric"], "score")
+
+    def test_validate_config_accepts_image_error_selection_metric(self):
+        config = ExperimentConfig(selection_metric="image_error")
+        validate_config(config)
+
+    def test_validate_config_rejects_unknown_selection_metric(self):
+        config = ExperimentConfig(selection_metric="mean_eta")
+        with self.assertRaisesRegex(ValueError, "selection_metric"):
+            validate_config(config)
 
     def test_validate_config_accepts_lineart_mode_with_target_path(self):
         config = ExperimentConfig(target_mode="lineart", target_path="outline.png")

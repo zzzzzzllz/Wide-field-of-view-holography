@@ -82,6 +82,7 @@ class ExperimentConfig:
     output_root: str = "outputs/holo_experiments"
     label: str = "quick9"
     diagnostic_interval: int = 1
+    selection_metric: str = "score"
     pair_mat: list[list[int]] = field(default_factory=lambda: [row[:] for row in DEFAULT_PAIR_MAT])
     physical: PhysicalConfig = field(default_factory=PhysicalConfig)
     guided_mode: GuidedModeConfig = field(default_factory=GuidedModeConfig)
@@ -135,6 +136,8 @@ def validate_config(config: ExperimentConfig) -> None:
         raise ValueError("lr must be positive")
     if not _is_positive_integer(config.diagnostic_interval):
         raise ValueError("diagnostic_interval must be positive")
+    if config.selection_metric not in {"score", "image_error", "gray_level_error", "efficiency_balance_penalty"}:
+        raise ValueError("selection_metric must be score, image_error, gray_level_error, or efficiency_balance_penalty")
     if not isinstance(config.pair_mat, (list, tuple)):
         raise ValueError("pair_mat length must equal n_channels")
     if len(config.pair_mat) != config.n_channels:
