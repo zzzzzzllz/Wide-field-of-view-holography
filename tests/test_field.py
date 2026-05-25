@@ -11,6 +11,8 @@ from holo_opt.field import (
     compute_loss_terms,
     fftshift2,
     gray_monotonic_loss,
+    high_frequency_loss,
+    local_uniformity_loss,
     normalize_intensities,
     phase_smoothness_loss,
     training_loss,
@@ -77,13 +79,15 @@ class FieldTest(unittest.TestCase):
             "gray_monotonic_weight": 0.1,
             "phase_smoothness_weight": 1e-4,
             "background_weight": 0.0,
+            "local_uniformity_weight": 0.02,
+            "high_frequency_weight": 0.05,
         }
 
         terms = compute_loss_terms(phdx, phdy, pair_mat, targets, weights, loss_weights)
 
         self.assertEqual(
             set(terms),
-            {"total", "image_mse", "eta_balance", "gray_monotonic", "phase_smoothness", "background"},
+            {"total", "image_mse", "eta_balance", "gray_monotonic", "phase_smoothness", "background", "local_uniformity", "high_frequency"},
         )
         for value in terms.values():
             self.assertTrue(torch.isfinite(value).item())
@@ -138,6 +142,41 @@ class FieldTest(unittest.TestCase):
 
         self.assertEqual(float(background_loss(reconstruction, targets)), 0.0)
 
+    def test_local_uniformity_loss_returns_zero_without_object_region(self):
+        reconstruction = torch.tensor([[[0.0, 1.0], [1.0, 0.0]]], dtype=torch.float32)
+        targets = torch.zeros((1, 2, 2), dtype=torch.float32)
+
+        self.assertEqual(float(local_uniformity_loss(reconstruction, targets)), 0.0)
+
+    def test_local_uniformity_loss_penalizes_noisy_flat_region_more_than_uniform_region(self):
+        targets = torch.ones((1, 3, 3), dtype=torch.float32)
+        uniform = torch.full((1, 3, 3), 0.5, dtype=torch.float32)
+        noisy = uniform.clone()
+        noisy[0, 1, 1] = 1.0
+
+        self.assertGreater(float(local_uniformity_loss(noisy, targets)), float(local_uniformity_loss(uniform, targets)))
+
+    def test_local_uniformity_loss_downweights_target_edges(self):
+        reconstruction = torch.full((1, 3, 3), 0.5, dtype=torch.float32)
+        reconstruction[0, 1, 1] = 1.0
+        flat_target = torch.ones((1, 3, 3), dtype=torch.float32)
+        edge_target = torch.tensor(
+            [[[0.0, 0.0, 0.0], [0.0, 1.0, 1.0], [0.0, 1.0, 1.0]]],
+            dtype=torch.float32,
+        )
+
+        self.assertLess(float(local_uniformity_loss(reconstruction, edge_target)), float(local_uniformity_loss(reconstruction, flat_target)))
+
+    def test_high_frequency_loss_penalizes_checkerboard_more_than_uniform_region(self):
+        targets = torch.ones((1, 4, 4), dtype=torch.float32)
+        uniform = torch.full((1, 4, 4), 0.5, dtype=torch.float32)
+        checkerboard = torch.tensor(
+            [[[0.0, 1.0, 0.0, 1.0], [1.0, 0.0, 1.0, 0.0], [0.0, 1.0, 0.0, 1.0], [1.0, 0.0, 1.0, 0.0]]],
+            dtype=torch.float32,
+        )
+
+        self.assertGreater(float(high_frequency_loss(checkerboard, targets)), float(high_frequency_loss(uniform, targets)))
+
     def test_compute_loss_terms_background_weight_affects_total(self):
         phdx = torch.zeros((2, 2), dtype=torch.float32)
         phdy = torch.zeros((2, 2), dtype=torch.float32)
@@ -153,7 +192,7 @@ class FieldTest(unittest.TestCase):
                 pair_mat,
                 targets,
                 weights,
-                {"eta_balance_weight": 0.0, "gray_monotonic_weight": 0.0, "background_weight": 0.0},
+                {"eta_balance_weight": 0.0, "gray_monotonic_weight": 0.0, "background_weight": 0.0, "local_uniformity_weight": 0.0, "high_frequency_weight": 0.0},
             )
             with_background = compute_loss_terms(
                 phdx,
@@ -161,11 +200,73 @@ class FieldTest(unittest.TestCase):
                 pair_mat,
                 targets,
                 weights,
-                {"eta_balance_weight": 0.0, "gray_monotonic_weight": 0.0, "background_weight": 2.0},
+                {"eta_balance_weight": 0.0, "gray_monotonic_weight": 0.0, "background_weight": 2.0, "local_uniformity_weight": 0.0, "high_frequency_weight": 0.0},
             )
 
         self.assertGreater(float(with_background["background"]), 0.0)
         self.assertGreater(float(with_background["total"]), float(without_background["total"]))
+
+    def test_compute_loss_terms_local_uniformity_weight_affects_total(self):
+        phdx = torch.zeros((3, 3), dtype=torch.float32)
+        phdy = torch.zeros((3, 3), dtype=torch.float32)
+        pair_mat = torch.tensor([[1.0, 0.0]], dtype=torch.float32)
+        targets = torch.ones((1, 3, 3), dtype=torch.float32)
+        weights = torch.ones(1, dtype=torch.float32)
+        intensities = torch.full((1, 3, 3), 0.5, dtype=torch.float32)
+        intensities[0, 1, 1] = 1.0
+
+        with patch("holo_opt.field.compute_intensities", return_value=intensities):
+            without_uniformity = compute_loss_terms(
+                phdx,
+                phdy,
+                pair_mat,
+                targets,
+                weights,
+                {"eta_balance_weight": 0.0, "gray_monotonic_weight": 0.0, "background_weight": 0.0, "local_uniformity_weight": 0.0, "high_frequency_weight": 0.0},
+            )
+            with_uniformity = compute_loss_terms(
+                phdx,
+                phdy,
+                pair_mat,
+                targets,
+                weights,
+                {"eta_balance_weight": 0.0, "gray_monotonic_weight": 0.0, "background_weight": 0.0, "local_uniformity_weight": 2.0, "high_frequency_weight": 0.0},
+            )
+
+        self.assertGreater(float(with_uniformity["local_uniformity"]), 0.0)
+        self.assertGreater(float(with_uniformity["total"]), float(without_uniformity["total"]))
+
+    def test_compute_loss_terms_high_frequency_weight_affects_total(self):
+        phdx = torch.zeros((4, 4), dtype=torch.float32)
+        phdy = torch.zeros((4, 4), dtype=torch.float32)
+        pair_mat = torch.tensor([[1.0, 0.0]], dtype=torch.float32)
+        targets = torch.ones((1, 4, 4), dtype=torch.float32)
+        weights = torch.ones(1, dtype=torch.float32)
+        intensities = torch.tensor(
+            [[[0.0, 1.0, 0.0, 1.0], [1.0, 0.0, 1.0, 0.0], [0.0, 1.0, 0.0, 1.0], [1.0, 0.0, 1.0, 0.0]]],
+            dtype=torch.float32,
+        )
+
+        with patch("holo_opt.field.compute_intensities", return_value=intensities):
+            without_high_frequency = compute_loss_terms(
+                phdx,
+                phdy,
+                pair_mat,
+                targets,
+                weights,
+                {"eta_balance_weight": 0.0, "gray_monotonic_weight": 0.0, "background_weight": 0.0, "local_uniformity_weight": 0.0, "high_frequency_weight": 0.0},
+            )
+            with_high_frequency = compute_loss_terms(
+                phdx,
+                phdy,
+                pair_mat,
+                targets,
+                weights,
+                {"eta_balance_weight": 0.0, "gray_monotonic_weight": 0.0, "background_weight": 0.0, "local_uniformity_weight": 0.0, "high_frequency_weight": 0.5},
+            )
+
+        self.assertGreater(float(with_high_frequency["high_frequency"]), 0.0)
+        self.assertGreater(float(with_high_frequency["total"]), float(without_high_frequency["total"]))
 
     def test_training_loss_accepts_optional_loss_weights(self):
         phdx = torch.zeros((2, 2), dtype=torch.float32)

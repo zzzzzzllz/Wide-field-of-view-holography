@@ -22,6 +22,7 @@ DEFAULT_GRAYSCALE_TILE_BALANCE_STRENGTH = 0.35
 DEFAULT_GRAYSCALE_TILE_BALANCE_CLIP = 1.35
 DEFAULT_GRAYSCALE_PERCENTILE_LOW = 2.0
 DEFAULT_GRAYSCALE_PERCENTILE_HIGH = 98.0
+DEFAULT_SINK_BORDER_RATIO = 0.1
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,12 @@ def _resampling_lanczos() -> int:
     if hasattr(Image, "Resampling"):
         return Image.Resampling.LANCZOS
     return Image.LANCZOS
+
+
+def _resampling_nearest() -> int:
+    if hasattr(Image, "Resampling"):
+        return Image.Resampling.NEAREST
+    return Image.NEAREST
 
 
 def _validate_size(size: int) -> None:
@@ -82,6 +89,24 @@ def load_rgb_image_as_dimmed_square_grayscale(path: str | Path, size: int) -> np
     canvas = load_rgb_image_as_square_canvas(path, size)
     grayscale = np.asarray(canvas.convert("L"), dtype=np.float32) / 255.0
     return build_dimmed_grayscale_image(grayscale)
+
+
+def build_capped_grayscale_image(
+    grayscale: np.ndarray,
+    *,
+    max_intensity: float = DEFAULT_GRAYSCALE_MAX_INTENSITY,
+) -> np.ndarray:
+    """Preserve grayscale ordering and apply only a global brightness cap."""
+    image = np.asarray(grayscale, dtype=np.float32)
+    if image.ndim != 2:
+        raise ValueError("grayscale image must be 2D")
+    if not np.isfinite(image).all():
+        raise ValueError("grayscale image contains NaN or inf")
+    if not (0.0 < float(max_intensity) <= 1.0):
+        raise ValueError("max_intensity must be in the range (0, 1]")
+
+    clipped = np.clip(image, 0.0, 1.0)
+    return np.clip(clipped * float(max_intensity), 0.0, float(max_intensity)).astype(np.float32)
 
 
 def build_dimmed_grayscale_image(
@@ -158,6 +183,13 @@ def _percentile_scale(values: np.ndarray, *, percentile: float) -> float:
     return float(np.percentile(positive, percentile))
 
 
+def load_rgb_image_as_capped_square_grayscale(path: str | Path, size: int) -> np.ndarray:
+    """Load an RGB image as grayscale and apply only a global brightness cap."""
+    canvas = load_rgb_image_as_square_canvas(path, size)
+    grayscale = np.asarray(canvas.convert("L"), dtype=np.float32) / 255.0
+    return build_capped_grayscale_image(grayscale)
+
+
 def _grid_size_for_channels(expected_channels: int) -> int:
     if type(expected_channels) is not int or expected_channels <= 0:
         raise ValueError("expected_channels must be a positive integer")
@@ -167,13 +199,39 @@ def _grid_size_for_channels(expected_channels: int) -> int:
     return grid_size
 
 
+def _split_square_array_into_channel_tiles(
+    values: np.ndarray,
+    expected_channels: int,
+    *,
+    resample: int,
+) -> np.ndarray:
+    array = np.asarray(values, dtype=np.float32)
+    if array.ndim != 2:
+        raise ValueError("grayscale image must be 2D")
+    if not np.isfinite(array).all():
+        raise ValueError("grayscale image contains NaN or inf")
+
+    grid_size = _grid_size_for_channels(expected_channels)
+    height, width = array.shape
+    max_intensity = float(np.clip(array.max(), 0.0, 1.0))
+    row_indices = np.array_split(np.arange(height), grid_size)
+    col_indices = np.array_split(np.arange(width), grid_size)
+    tiles: list[np.ndarray] = []
+
+    for rows in row_indices:
+        for cols in col_indices:
+            tile = array[int(rows[0]): int(rows[-1]) + 1, int(cols[0]): int(cols[-1]) + 1]
+            tile_image = Image.fromarray(np.uint8(np.clip(tile, 0.0, 1.0) * 255.0), mode="L")
+            resized = tile_image.resize((width, height), resample=resample)
+            resized_tile = np.asarray(resized, dtype=np.float32) / 255.0
+            tiles.append(np.clip(resized_tile, 0.0, max_intensity))
+
+    return np.stack(tiles, axis=0).astype(np.float32)
+
+
 def split_grayscale_image_into_channel_tiles(grayscale: np.ndarray, expected_channels: int = 9) -> np.ndarray:
     """Split one grayscale image into row-major tiles and resize each tile per channel."""
-    return split_grayscale_image_into_channel_tiles_with_report(
-        grayscale,
-        expected_channels=expected_channels,
-        tile_balance_strength=0.0,
-    )[0]
+    return _split_square_array_into_channel_tiles(grayscale, expected_channels, resample=_resampling_lanczos())
 
 
 def split_grayscale_image_into_channel_tiles_with_report(
@@ -288,6 +346,41 @@ def _stitch_channel_tiles(tiles: np.ndarray) -> np.ndarray:
             row_tiles.append(tile[:tile_height, :tile_width])
         rows.append(np.concatenate(row_tiles, axis=1))
     return np.concatenate(rows, axis=0).astype(np.float32)
+
+
+def split_mask_into_channel_tiles(mask: np.ndarray, expected_channels: int = 9) -> np.ndarray:
+    """Split one binary-like mask into row-major tiles and resize each tile with nearest-neighbor."""
+    return _split_square_array_into_channel_tiles(mask, expected_channels, resample=_resampling_nearest())
+
+
+def apply_outer_sink_border(
+    grayscale: np.ndarray,
+    *,
+    sink_border_ratio: float = DEFAULT_SINK_BORDER_RATIO,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Reserve a dark outer border around the full stitched image as a noise sink region."""
+    image = np.asarray(grayscale, dtype=np.float32)
+    if image.ndim != 2:
+        raise ValueError("grayscale image must be 2D")
+    if not np.isfinite(image).all():
+        raise ValueError("grayscale image contains NaN or inf")
+    ratio = float(sink_border_ratio)
+    if not (0.0 <= ratio < 0.5):
+        raise ValueError("sink_border_ratio must be in the range [0, 0.5)")
+
+    border = int(round(min(image.shape) * ratio))
+    if border <= 0:
+        return np.clip(image, 0.0, 1.0).astype(np.float32), np.zeros_like(image, dtype=np.float32)
+
+    sink_mask = np.zeros_like(image, dtype=np.float32)
+    sink_mask[:border, :] = 1.0
+    sink_mask[-border:, :] = 1.0
+    sink_mask[:, :border] = 1.0
+    sink_mask[:, -border:] = 1.0
+
+    bordered = np.clip(image, 0.0, 1.0).astype(np.float32).copy()
+    bordered[sink_mask > 0.0] = 0.0
+    return bordered, sink_mask
 
 
 def extract_edge_mask(
@@ -417,3 +510,36 @@ def generate_grayscale_target_artifacts(
         stitched_target=_stitch_channel_tiles(targets),
         report_rows=report_rows,
     )
+
+
+def generate_direct_grayscale_image_targets(
+    path: str | Path,
+    *,
+    expected_channels: int = 9,
+    size: int = 128,
+) -> np.ndarray:
+    """Create direct grayscale image tiles using only grayscale conversion and a brightness cap."""
+    _grid_size_for_channels(expected_channels)
+    grayscale = load_rgb_image_as_capped_square_grayscale(path, size)
+    if not np.any(grayscale > 0.0):
+        raise ValueError("direct grayscale target generation produced an empty image")
+    return split_grayscale_image_into_channel_tiles(grayscale, expected_channels=expected_channels)
+
+
+def generate_direct_grayscale_image_targets_with_sink(
+    path: str | Path,
+    *,
+    expected_channels: int = 9,
+    size: int = 128,
+    sink_border_ratio: float = DEFAULT_SINK_BORDER_RATIO,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Create direct grayscale image tiles plus an outer stitched border reserved as a noise sink."""
+    _grid_size_for_channels(expected_channels)
+    grayscale = load_rgb_image_as_capped_square_grayscale(path, size)
+    bordered, sink_mask = apply_outer_sink_border(grayscale, sink_border_ratio=sink_border_ratio)
+    if not np.any(bordered > 0.0):
+        raise ValueError("direct grayscale sink target generation produced an empty image")
+
+    targets = split_grayscale_image_into_channel_tiles(bordered, expected_channels=expected_channels)
+    optimization_mask = 1.0 - split_mask_into_channel_tiles(sink_mask, expected_channels=expected_channels)
+    return targets, np.clip(optimization_mask, 0.0, 1.0).astype(np.float32)

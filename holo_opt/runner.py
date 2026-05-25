@@ -14,6 +14,8 @@ from holo_opt.export import export_results
 from holo_opt.field import compute_intensities, compute_loss_terms
 from holo_opt.line_targets import (
     GrayscaleTargetArtifacts,
+    generate_direct_grayscale_image_targets,
+    generate_direct_grayscale_image_targets_with_sink,
     generate_grayscale_target_artifacts,
     generate_line_art_targets,
 )
@@ -36,6 +38,7 @@ class ExperimentResult:
 class TargetLoadResult:
     targets: np.ndarray
     grayscale_artifacts: GrayscaleTargetArtifacts | None = None
+    spatial_weights: np.ndarray | None = None
 
 
 def resolve_device(requested: str) -> torch.device:
@@ -46,36 +49,36 @@ def resolve_device(requested: str) -> torch.device:
     return torch.device(requested)
 
 
-def load_targets_for_config(config: ExperimentConfig) -> np.ndarray:
-    return load_targets_bundle_for_config(config).targets
-
-
 def load_targets_bundle_for_config(config: ExperimentConfig) -> TargetLoadResult:
     if config.target_mode == "standard":
         targets = generate_gray_step_targets(config.n_channels, config.size, config.levels)
         return TargetLoadResult(targets=validate_targets(targets, expected_channels=config.n_channels))
-    elif config.target_mode == "mat":
+
+    if config.target_mode == "mat":
         targets = load_mat_targets(
             config.target_path,
             variable=config.mat_variable,
             expected_channels=config.n_channels,
         )
         return TargetLoadResult(targets=validate_targets(targets, expected_channels=config.n_channels))
-    elif config.target_mode == "lineart":
+
+    if config.target_mode == "lineart":
         targets = generate_line_art_targets(
             config.target_path,
             expected_channels=config.n_channels,
             size=config.size,
         )
         return TargetLoadResult(targets=validate_targets(targets, expected_channels=config.n_channels))
-    elif config.target_mode == "image":
+
+    if config.target_mode == "image":
         targets = generate_direct_image_targets(
             config.target_path,
             expected_channels=config.n_channels,
             size=config.size,
         )
         return TargetLoadResult(targets=validate_targets(targets, expected_channels=config.n_channels))
-    elif config.target_mode == "grayscale":
+
+    if config.target_mode == "grayscale":
         artifacts = generate_grayscale_target_artifacts(
             config.target_path,
             expected_channels=config.n_channels,
@@ -86,8 +89,34 @@ def load_targets_bundle_for_config(config: ExperimentConfig) -> TargetLoadResult
             targets=validate_targets(artifacts.targets, expected_channels=config.n_channels),
             grayscale_artifacts=artifacts,
         )
-    else:
-        raise ValueError("target_mode must be standard, mat, lineart, grayscale, or image")
+
+    if config.target_mode == "grayscale_direct":
+        targets = generate_direct_grayscale_image_targets(
+            config.target_path,
+            expected_channels=config.n_channels,
+            size=config.size,
+        )
+        return TargetLoadResult(targets=validate_targets(targets, expected_channels=config.n_channels))
+
+    if config.target_mode == "grayscale_direct_sink":
+        targets, spatial_weights = generate_direct_grayscale_image_targets_with_sink(
+            config.target_path,
+            expected_channels=config.n_channels,
+            size=config.size,
+            sink_border_ratio=config.sink_border_ratio,
+        )
+        return TargetLoadResult(
+            targets=validate_targets(targets, expected_channels=config.n_channels),
+            spatial_weights=validate_targets(spatial_weights, expected_channels=config.n_channels),
+        )
+
+    raise ValueError(
+        "target_mode must be standard, mat, lineart, grayscale, image, grayscale_direct, or grayscale_direct_sink"
+    )
+
+
+def load_targets_for_config(config: ExperimentConfig) -> np.ndarray:
+    return load_targets_bundle_for_config(config).targets
 
 
 def compute_score(summary: dict[str, object], score_config: ScoreConfig) -> float:
@@ -114,6 +143,8 @@ def loss_config_to_dict(config: ExperimentConfig) -> dict[str, float]:
         "gray_monotonic_weight": config.loss.gray_monotonic_weight,
         "phase_smoothness_weight": config.loss.phase_smoothness_weight,
         "background_weight": config.loss.background_weight,
+        "local_uniformity_weight": config.loss.local_uniformity_weight,
+        "high_frequency_weight": config.loss.high_frequency_weight,
     }
 
 
@@ -132,17 +163,16 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
     np.random.seed(config.seed)
     rng = np.random.default_rng(config.seed)
 
-    # Stage 1: prepare the multi-channel target images that each diffraction
-    # channel should reproduce in the far field.
     target_bundle = load_targets_bundle_for_config(config)
     targets_np = target_bundle.targets
+    spatial_weights_np = target_bundle.spatial_weights
     height, width = targets_np.shape[-2], targets_np.shape[-1]
     targets = torch.as_tensor(targets_np, dtype=torch.float32, device=device)
+    spatial_weights = None
+    if spatial_weights_np is not None:
+        spatial_weights = torch.as_tensor(spatial_weights_np, dtype=torch.float32, device=device)
     pair_mat = torch.as_tensor(config.pair_mat, dtype=torch.float32, device=device)
 
-    # Stage 2: initialize the proxy on-chip structure parameters. The optimizer
-    # does not directly update nanostructure geometry; it updates the effective
-    # phase maps phdx/phdy used by the FFT model.
     phdx = torch.tensor(
         rng.uniform(0.0, 2.0 * np.pi, size=(height, width)),
         dtype=torch.float32,
@@ -169,12 +199,18 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
     best_state: dict[str, Any] | None = None
     total_steps = config.outer_loops * config.epochs_per_chunk
 
-    # Stage 3: optimize the proxy structure so that every configured channel
-    # produces a far-field image close to its own target image.
-    for _outer_index in range(config.outer_loops):
+    for outer_index in range(config.outer_loops):
         for _epoch_index in range(config.epochs_per_chunk):
             optimizer.zero_grad()
-            terms = compute_loss_terms(phdx, phdy, pair_mat, targets, weights, loss_config_to_dict(config))
+            terms = compute_loss_terms(
+                phdx,
+                phdy,
+                pair_mat,
+                targets,
+                weights,
+                loss_config_to_dict(config),
+                spatial_weights=spatial_weights,
+            )
             loss = terms["total"]
             if not torch.isfinite(loss).item():
                 raise RuntimeError("non-finite loss encountered")
@@ -185,35 +221,46 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
             progress_message = format_progress_message(len(losses), total_steps, loss_value)
             if progress_message is not None:
                 print(progress_message, flush=True)
-            loss_terms_history.append({
-                "step": float(len(losses)),
-                "total": loss_value,
-                "image_mse": float(terms["image_mse"].detach().cpu().item()),
-                "eta_balance": float(terms["eta_balance"].detach().cpu().item()),
-                "gray_monotonic": float(terms["gray_monotonic"].detach().cpu().item()),
-                "phase_smoothness": float(terms["phase_smoothness"].detach().cpu().item()),
-                "background": float(terms["background"].detach().cpu().item()),
-            })
+            loss_terms_history.append(
+                {
+                    "step": float(len(losses)),
+                    "total": loss_value,
+                    "image_mse": float(terms["image_mse"].detach().cpu().item()),
+                    "eta_balance": float(terms["eta_balance"].detach().cpu().item()),
+                    "gray_monotonic": float(terms["gray_monotonic"].detach().cpu().item()),
+                    "phase_smoothness": float(terms["phase_smoothness"].detach().cpu().item()),
+                    "background": float(terms["background"].detach().cpu().item()),
+                    "local_uniformity": float(terms["local_uniformity"].detach().cpu().item()),
+                    "high_frequency": float(terms["high_frequency"].detach().cpu().item()),
+                }
+            )
 
         with torch.no_grad():
             intensities_np = compute_intensities(phdx, phdy, pair_mat).detach().cpu().numpy().astype(np.float32)
         if not np.isfinite(intensities_np).all():
             raise RuntimeError("non-finite intensities encountered")
-        metrics = apply_score_config(evaluate_metrics(intensities_np, targets_np), config.score)
+        metrics = apply_score_config(
+            evaluate_metrics(intensities_np, targets_np, spatial_weights=spatial_weights_np),
+            config.score,
+        )
         score = float(metrics["summary"]["score"])  # type: ignore[index]
-        outer_number = _outer_index + 1
+        outer_number = outer_index + 1
         summary = metrics["summary"]  # type: ignore[assignment]
-        diagnostics.append({
-            "outer": float(outer_number),
-            "loss": losses[-1],
-            "score": score,
-            "mean_eta": float(summary["mean_eta"]),  # type: ignore[index]
-            "eta_balance": float(summary["efficiency_balance_penalty"]),  # type: ignore[index]
-            "image_error": float(summary["image_error"]),  # type: ignore[index]
-            "gray_level_error": float(summary["gray_level_error"]),  # type: ignore[index]
-            "weight_min": float(np.min(weights_np)),
-            "weight_max": float(np.max(weights_np)),
-        })
+        diagnostics.append(
+            {
+                "outer": float(outer_number),
+                "loss": losses[-1],
+                "score": score,
+                "mean_eta": float(summary["mean_eta"]),  # type: ignore[index]
+                "eta_balance": float(summary["efficiency_balance_penalty"]),  # type: ignore[index]
+                "image_error": float(summary["image_error"]),  # type: ignore[index]
+                "gray_level_error": float(summary["gray_level_error"]),  # type: ignore[index]
+                "object_local_variance": float(summary["object_local_variance"]),  # type: ignore[index]
+                "object_high_frequency_energy": float(summary["object_high_frequency_energy"]),  # type: ignore[index]
+                "weight_min": float(np.min(weights_np)),
+                "weight_max": float(np.max(weights_np)),
+            }
+        )
         if outer_number % config.diagnostic_interval == 0:
             outer_summaries.append((outer_number, intensities_np.copy()))
         if np.isfinite(score) and score < best_score:
@@ -247,8 +294,6 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
     if best_state is None:
         raise RuntimeError("no valid optimization state produced")
 
-    # Stage 4: export the best optimization state and all diagnostics for later
-    # visual inspection under outputs/holo_experiments.
     run_dir = export_results(
         config,
         targets_np,

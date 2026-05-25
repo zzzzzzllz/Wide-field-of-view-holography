@@ -39,7 +39,15 @@ class ExportResultsTest(unittest.TestCase):
             weights_history = [[1.0] * 9]
             metrics = {
                 "rows": [
-                    {"channel": index + 1, "mse": 0.1, "eta": 0.5, "gray_level_error": 0.2, "gray_means": [0.0] * 16}
+                    {
+                        "channel": index + 1,
+                        "mse": 0.1,
+                        "eta": 0.5,
+                        "gray_level_error": 0.2,
+                        "gray_means": [0.0] * 16,
+                        "object_local_variance": 0.03,
+                        "object_high_frequency_energy": 0.04,
+                    }
                     for index in range(9)
                 ],
                 "summary": {
@@ -48,6 +56,8 @@ class ExportResultsTest(unittest.TestCase):
                     "gray_level_error": 0.2,
                     "efficiency_balance_penalty": 0.3,
                     "mean_eta": 0.5,
+                    "object_local_variance": 0.03,
+                    "object_high_frequency_energy": 0.04,
                 },
             }
 
@@ -114,9 +124,9 @@ class ExportResultsTest(unittest.TestCase):
 
             with (run_dir / "metrics.csv").open(newline="", encoding="utf-8") as handle:
                 rows = list(csv.reader(handle))
-            self.assertEqual(rows[0], ["channel", "mse", "eta", "gray_level_error", "score"])
+            self.assertEqual(rows[0], ["channel", "mse", "eta", "gray_level_error", "object_local_variance", "object_high_frequency_energy", "score"])
             self.assertEqual(len(rows), 10)
-            self.assertEqual(rows[1], ["1", "0.1", "0.5", "0.2", "1.25"])
+            self.assertEqual(rows[1], ["1", "0.1", "0.5", "0.2", "0.03", "0.04", "1.25"])
 
             np.testing.assert_allclose(np.loadtxt(run_dir / "phdx.csv", delimiter=","), phdx)
             np.testing.assert_allclose(np.loadtxt(run_dir / "phdy.csv", delimiter=","), phdy)
@@ -134,10 +144,18 @@ class ExportResultsTest(unittest.TestCase):
             config = ExperimentConfig(size=2, output_root=tmp, label="../bad:name")
             metrics = {
                 "rows": [
-                    {"channel": index + 1, "mse": 0.0, "eta": 1.0, "gray_level_error": 0.0, "gray_means": [0.0] * 16}
+                    {
+                        "channel": index + 1,
+                        "mse": 0.0,
+                        "eta": 1.0,
+                        "gray_level_error": 0.0,
+                        "gray_means": [0.0] * 16,
+                        "object_local_variance": 0.0,
+                        "object_high_frequency_energy": 0.0,
+                    }
                     for index in range(9)
                 ],
-                "summary": {"score": 0.0},
+                "summary": {"score": 0.0, "object_local_variance": 0.0, "object_high_frequency_energy": 0.0},
             }
             run_dir = export_results(
                 config,
@@ -175,6 +193,8 @@ class ExportResultsTest(unittest.TestCase):
                         "eta": 0.5,
                         "gray_level_error": 0.2,
                         "gray_means": [0.0] * 16,
+                        "object_local_variance": 0.03,
+                        "object_high_frequency_energy": 0.04,
                     }
                     for index in range(9)
                 ],
@@ -184,6 +204,8 @@ class ExportResultsTest(unittest.TestCase):
                     "gray_level_error": 0.2,
                     "efficiency_balance_penalty": 0.3,
                     "mean_eta": 0.5,
+                    "object_local_variance": 0.03,
+                    "object_high_frequency_energy": 0.04,
                 },
             }
             diagnostics = [
@@ -195,6 +217,8 @@ class ExportResultsTest(unittest.TestCase):
                     "eta_balance": 0.3,
                     "image_error": 0.1,
                     "gray_level_error": 0.2,
+                    "object_local_variance": 0.03,
+                    "object_high_frequency_energy": 0.04,
                     "weight_min": 1.0,
                     "weight_max": 1.0,
                 },
@@ -206,6 +230,8 @@ class ExportResultsTest(unittest.TestCase):
                     "eta_balance": 0.2,
                     "image_error": 0.08,
                     "gray_level_error": 0.15,
+                    "object_local_variance": 0.02,
+                    "object_high_frequency_energy": 0.03,
                     "weight_min": 0.9,
                     "weight_max": 1.1,
                     "extra_term": 0.25,
@@ -220,6 +246,8 @@ class ExportResultsTest(unittest.TestCase):
                     "gray_monotonic": 0.3,
                     "phase_smoothness": 0.4,
                     "background": 0.0,
+                    "local_uniformity": 0.1,
+                    "high_frequency": 0.2,
                 }
             ]
 
@@ -250,24 +278,26 @@ class ExportResultsTest(unittest.TestCase):
                     "eta_balance",
                     "image_error",
                     "gray_level_error",
+                    "object_local_variance",
+                    "object_high_frequency_energy",
                     "weight_min",
                     "weight_max",
                     "extra_term",
                 ],
             )
-            self.assertEqual(diagnostics_rows[1], ["1", "2.0", "1.0", "0.5", "0.3", "0.1", "0.2", "1.0", "1.0", ""])
+            self.assertEqual(diagnostics_rows[1], ["1", "2.0", "1.0", "0.5", "0.3", "0.1", "0.2", "0.03", "0.04", "1.0", "1.0", ""])
             self.assertEqual(
                 diagnostics_rows[2],
-                ["2", "1.5", "1.2", "0.6", "0.2", "0.08", "0.15", "0.9", "1.1", "0.25"],
+                ["2", "1.5", "1.2", "0.6", "0.2", "0.08", "0.15", "0.02", "0.03", "0.9", "1.1", "0.25"],
             )
 
             with (run_dir / "loss_terms.csv").open(newline="", encoding="utf-8") as handle:
                 loss_terms_rows = list(csv.reader(handle))
             self.assertEqual(
                 loss_terms_rows[0],
-                ["step", "total", "image_mse", "eta_balance", "gray_monotonic", "phase_smoothness", "background"],
+                ["step", "total", "image_mse", "eta_balance", "gray_monotonic", "phase_smoothness", "background", "local_uniformity", "high_frequency"],
             )
-            self.assertEqual(loss_terms_rows[1], ["1", "2.0", "1.0", "0.2", "0.3", "0.4", "0.0"])
+            self.assertEqual(loss_terms_rows[1], ["1", "2.0", "1.0", "0.2", "0.3", "0.4", "0.0", "0.1", "0.2"])
             self.assertGreater((run_dir / "loss_terms.png").stat().st_size, 0)
             self.assertGreater((run_dir / "outer_001_summary.png").stat().st_size, 0)
             self.assertGreater((run_dir / "outer_001_stitched_comparison.png").stat().st_size, 0)

@@ -19,8 +19,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run 9-channel grayscale holography optimization."
     )
-    parser.add_argument("--target-mode", choices=["standard", "mat", "lineart", "grayscale", "image"], default="standard")
+    parser.add_argument(
+        "--target-mode",
+        choices=["standard", "mat", "lineart", "grayscale", "image", "grayscale_direct", "grayscale_direct_sink"],
+        default="standard",
+    )
     parser.add_argument("--target-path", default=None)
+    parser.add_argument("--sink-border-ratio", type=float, default=0.1)
     parser.add_argument("--mat-variable", default="bw_all")
     parser.add_argument("--size", type=int, default=128)
     parser.add_argument("--epochs-per-chunk", type=int, default=300)
@@ -50,6 +55,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--grayscale-detail-boost", type=float, default=0.2)
     parser.add_argument("--grayscale-tile-balance-strength", type=float, default=0.35)
     parser.add_argument("--grayscale-tile-balance-clip", type=float, default=1.35)
+    parser.add_argument("--local-uniformity-weight", type=float, default=0.02)
+    parser.add_argument("--high-frequency-weight", type=float, default=0.05)
     return parser
 
 
@@ -63,6 +70,7 @@ def config_from_args(args: argparse.Namespace) -> ExperimentConfig:
         device=args.device,
         target_mode=args.target_mode,
         target_path=args.target_path,
+        sink_border_ratio=args.sink_border_ratio,
         mat_variable=args.mat_variable,
         output_root=args.output_root,
         label=args.label,
@@ -86,6 +94,8 @@ def config_from_args(args: argparse.Namespace) -> ExperimentConfig:
             gray_monotonic_weight=args.gray_monotonic_weight,
             phase_smoothness_weight=args.phase_smoothness_weight,
             background_weight=args.background_weight,
+            local_uniformity_weight=args.local_uniformity_weight,
+            high_frequency_weight=args.high_frequency_weight,
         ),
         grayscale_preprocess=GrayscalePreprocessConfig(
             max_intensity=args.grayscale_max_intensity,

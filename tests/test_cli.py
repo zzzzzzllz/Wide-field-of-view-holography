@@ -84,6 +84,10 @@ class CliTest(unittest.TestCase):
                 "0.004",
                 "--background-weight",
                 "0.1",
+                "--local-uniformity-weight",
+                "0.06",
+                "--high-frequency-weight",
+                "0.07",
                 "--diagnostic-interval",
                 "2",
             ]
@@ -95,6 +99,8 @@ class CliTest(unittest.TestCase):
         self.assertEqual(config.loss.gray_monotonic_weight, 0.3)
         self.assertEqual(config.loss.phase_smoothness_weight, 0.004)
         self.assertEqual(config.loss.background_weight, 0.1)
+        self.assertEqual(config.loss.local_uniformity_weight, 0.06)
+        self.assertEqual(config.loss.high_frequency_weight, 0.07)
         self.assertEqual(config.diagnostic_interval, 2)
 
     def test_config_from_args_supports_lineart_target_mode(self):
@@ -168,6 +174,45 @@ class CliTest(unittest.TestCase):
         self.assertEqual(config.target_mode, "image")
         self.assertEqual(config.target_path, "direct.png")
         self.assertEqual(config.size, 96)
+
+    def test_config_from_args_supports_grayscale_direct_target_mode(self):
+        args = build_parser().parse_args(
+            [
+                "--target-mode",
+                "grayscale_direct",
+                "--target-path",
+                "blocks.png",
+                "--size",
+                "96",
+            ]
+        )
+
+        config = config_from_args(args)
+
+        self.assertEqual(config.target_mode, "grayscale_direct")
+        self.assertEqual(config.target_path, "blocks.png")
+        self.assertEqual(config.size, 96)
+
+    def test_config_from_args_supports_grayscale_direct_sink_target_mode(self):
+        args = build_parser().parse_args(
+            [
+                "--target-mode",
+                "grayscale_direct_sink",
+                "--target-path",
+                "blocks.png",
+                "--size",
+                "96",
+                "--sink-border-ratio",
+                "0.15",
+            ]
+        )
+
+        config = config_from_args(args)
+
+        self.assertEqual(config.target_mode, "grayscale_direct_sink")
+        self.assertEqual(config.target_path, "blocks.png")
+        self.assertEqual(config.size, 96)
+        self.assertEqual(config.sink_border_ratio, 0.15)
 
 
 if __name__ == "__main__":

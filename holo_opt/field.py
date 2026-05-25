@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import torch
 import torch.fft as fft
+import torch.nn.functional as F
 
 
 def fftshift2(values: torch.Tensor) -> torch.Tensor:
@@ -59,12 +60,25 @@ def phase_smoothness_loss(phdx: torch.Tensor, phdy: torch.Tensor) -> torch.Tenso
 
 
 def gray_monotonic_loss(reconstruction: torch.Tensor, targets: torch.Tensor, levels: int = 16) -> torch.Tensor:
+    return gray_monotonic_loss_masked(reconstruction, targets, None, levels=levels)
+
+
+def gray_monotonic_loss_masked(
+    reconstruction: torch.Tensor,
+    targets: torch.Tensor,
+    spatial_weights: torch.Tensor | None,
+    levels: int = 16,
+) -> torch.Tensor:
     if levels < 2:
         raise ValueError("levels must be at least 2")
     reconstruction = _as_channel_tensor(reconstruction, "reconstruction")
     targets = _as_channel_tensor(targets, "targets")
     if reconstruction.shape != targets.shape:
         raise ValueError("reconstruction and targets must have the same shape")
+    if spatial_weights is not None:
+        spatial_weights = _as_channel_tensor(spatial_weights, "spatial_weights")
+        if spatial_weights.shape != targets.shape:
+            raise ValueError("spatial_weights and targets must have the same shape")
 
     penalties = []
     level_indices = torch.round(torch.clamp(targets, 0.0, 1.0) * float(levels - 1)).long()
@@ -72,6 +86,8 @@ def gray_monotonic_loss(reconstruction: torch.Tensor, targets: torch.Tensor, lev
         means = []
         for level in range(levels):
             mask = level_indices[channel] == level
+            if spatial_weights is not None:
+                mask = mask & (spatial_weights[channel] > 0)
             if torch.any(mask):
                 means.append(reconstruction[channel][mask].mean())
         if len(means) >= 2:
@@ -109,15 +125,94 @@ def channel_energy_balance_loss(
 
 
 def background_loss(reconstruction: torch.Tensor, targets: torch.Tensor, epsilon: float = 1e-8) -> torch.Tensor:
+    return background_loss_masked(reconstruction, targets, None, epsilon=epsilon)
+
+
+def background_loss_masked(
+    reconstruction: torch.Tensor,
+    targets: torch.Tensor,
+    spatial_weights: torch.Tensor | None,
+    epsilon: float = 1e-8,
+) -> torch.Tensor:
+    reconstruction = _as_channel_tensor(reconstruction, "reconstruction")
+    targets = _as_channel_tensor(targets, "targets")
+    if reconstruction.shape != targets.shape:
+        raise ValueError("reconstruction and targets must have the same shape")
+    if spatial_weights is not None:
+        spatial_weights = _as_channel_tensor(spatial_weights, "spatial_weights")
+        if spatial_weights.shape != targets.shape:
+            raise ValueError("spatial_weights and targets must have the same shape")
+
+    dark_mask = targets <= epsilon
+    if spatial_weights is not None:
+        dark_mask = dark_mask & (spatial_weights > 0)
+    if not torch.any(dark_mask):
+        return reconstruction.new_tensor(0.0)
+    return reconstruction[dark_mask].mean()
+
+
+def _target_edge_weight(targets: torch.Tensor) -> torch.Tensor:
+    gradient_y = torch.zeros_like(targets)
+    gradient_x = torch.zeros_like(targets)
+    gradient_y[..., 1:, :] = torch.abs(targets[..., 1:, :] - targets[..., :-1, :])
+    gradient_x[..., :, 1:] = torch.abs(targets[..., :, 1:] - targets[..., :, :-1])
+    edge_strength = torch.maximum(gradient_x, gradient_y)
+    return 1.0 / (1.0 + 4.0 * edge_strength)
+
+
+def local_uniformity_loss(
+    reconstruction: torch.Tensor,
+    targets: torch.Tensor,
+    kernel_size: int = 3,
+    epsilon: float = 1e-8,
+) -> torch.Tensor:
+    reconstruction = _as_channel_tensor(reconstruction, "reconstruction")
+    targets = _as_channel_tensor(targets, "targets")
+    if reconstruction.shape != targets.shape:
+        raise ValueError("reconstruction and targets must have the same shape")
+    if kernel_size < 1 or kernel_size % 2 == 0:
+        raise ValueError("kernel_size must be a positive odd integer")
+
+    object_weight = torch.where(targets > epsilon, torch.clamp(targets, 0.0, 1.0), torch.zeros_like(targets))
+    if not torch.any(object_weight > 0):
+        return reconstruction.new_tensor(0.0)
+
+    padding = kernel_size // 2
+    object_weight_4d = object_weight.unsqueeze(1)
+    weighted_sum = F.avg_pool2d(
+        (reconstruction * object_weight).unsqueeze(1),
+        kernel_size=kernel_size,
+        stride=1,
+        padding=padding,
+    )
+    weight_sum = F.avg_pool2d(object_weight_4d, kernel_size=kernel_size, stride=1, padding=padding)
+    local_mean = (weighted_sum / weight_sum.clamp_min(epsilon)).squeeze(1)
+    edge_weight = _target_edge_weight(torch.clamp(targets, 0.0, 1.0))
+    combined_weight = object_weight * edge_weight
+    squared_deviation = (reconstruction - local_mean).square()
+    return (combined_weight * squared_deviation).sum() / combined_weight.sum().clamp_min(epsilon)
+
+
+def high_frequency_loss(
+    reconstruction: torch.Tensor,
+    targets: torch.Tensor,
+    epsilon: float = 1e-8,
+) -> torch.Tensor:
     reconstruction = _as_channel_tensor(reconstruction, "reconstruction")
     targets = _as_channel_tensor(targets, "targets")
     if reconstruction.shape != targets.shape:
         raise ValueError("reconstruction and targets must have the same shape")
 
-    dark_mask = targets <= epsilon
-    if not torch.any(dark_mask):
+    object_weight = torch.where(targets > epsilon, torch.clamp(targets, 0.0, 1.0), torch.zeros_like(targets))
+    if not torch.any(object_weight > 0):
         return reconstruction.new_tensor(0.0)
-    return reconstruction[dark_mask].mean()
+
+    edge_weight = _target_edge_weight(torch.clamp(targets, 0.0, 1.0))
+    combined_weight = object_weight * edge_weight
+    kernel = reconstruction.new_tensor([[0.0, -1.0, 0.0], [-1.0, 4.0, -1.0], [0.0, -1.0, 0.0]]).view(1, 1, 3, 3)
+    padded = F.pad(reconstruction.unsqueeze(1), (1, 1, 1, 1), mode="replicate")
+    response = F.conv2d(padded, kernel).squeeze(1)
+    return (combined_weight * response.square()).sum() / combined_weight.sum().clamp_min(epsilon)
 
 
 def compute_loss_terms(
@@ -128,6 +223,7 @@ def compute_loss_terms(
     weights: torch.Tensor,
     loss_weights: dict[str, float] | None = None,
     epsilon: float = 1e-8,
+    spatial_weights: torch.Tensor | None = None,
 ) -> dict[str, torch.Tensor]:
     """Compare simulated far-field channels against target channels and return loss terms."""
     if loss_weights is None:
@@ -137,18 +233,35 @@ def compute_loss_terms(
     normalized_intensity = normalize_intensities(intensities, epsilon=epsilon)
     target_max = targets.amax(dim=(-2, -1), keepdim=True)
     normalized_target = targets / (target_max + epsilon)
-    per_channel = ((normalized_intensity - normalized_target) ** 2).mean(dim=(-2, -1))
+    spatial_mask = None
+    if spatial_weights is not None:
+        spatial_mask = _as_channel_tensor(spatial_weights, "spatial_weights")
+        if spatial_mask.shape != normalized_target.shape:
+            raise ValueError("spatial_weights and targets must have the same shape")
+    if spatial_mask is None:
+        per_channel = ((normalized_intensity - normalized_target) ** 2).mean(dim=(-2, -1))
+    else:
+        weighted_error = spatial_mask * (normalized_intensity - normalized_target).square()
+        per_channel = weighted_error.sum(dim=(-2, -1)) / spatial_mask.sum(dim=(-2, -1)).clamp_min(epsilon)
     image_mse = torch.sum(weights * per_channel)
     eta_balance = channel_energy_balance_loss(intensities, normalized_target, epsilon=epsilon)
-    gray_monotonic = gray_monotonic_loss(normalized_intensity, normalized_target)
+    gray_monotonic = gray_monotonic_loss_masked(normalized_intensity, normalized_target, spatial_mask)
     smoothness = phase_smoothness_loss(phdx, phdy)
-    background = background_loss(normalized_intensity, normalized_target, epsilon=epsilon)
+    background = background_loss_masked(normalized_intensity, normalized_target, spatial_mask, epsilon=epsilon)
+    if spatial_mask is None:
+        local_uniformity = local_uniformity_loss(normalized_intensity, normalized_target, epsilon=epsilon)
+        high_frequency = high_frequency_loss(normalized_intensity, normalized_target, epsilon=epsilon)
+    else:
+        local_uniformity = local_uniformity_loss(normalized_intensity, normalized_target * spatial_mask, epsilon=epsilon)
+        high_frequency = high_frequency_loss(normalized_intensity, normalized_target * spatial_mask, epsilon=epsilon)
     total = (
         float(loss_weights.get("image_weight", 1.0)) * image_mse
         + float(loss_weights.get("eta_balance_weight", 0.0)) * eta_balance
         + float(loss_weights.get("gray_monotonic_weight", 0.0)) * gray_monotonic
         + float(loss_weights.get("phase_smoothness_weight", 0.0)) * smoothness
         + float(loss_weights.get("background_weight", 0.0)) * background
+        + float(loss_weights.get("local_uniformity_weight", 0.0)) * local_uniformity
+        + float(loss_weights.get("high_frequency_weight", 0.0)) * high_frequency
     )
     return {
         "total": total,
@@ -157,6 +270,8 @@ def compute_loss_terms(
         "gray_monotonic": gray_monotonic,
         "phase_smoothness": smoothness,
         "background": background,
+        "local_uniformity": local_uniformity,
+        "high_frequency": high_frequency,
     }
 
 
@@ -168,8 +283,18 @@ def training_loss(
     weights: torch.Tensor,
     epsilon: float | dict[str, float] = 1e-8,
     loss_weights: dict[str, float] | None = None,
+    spatial_weights: torch.Tensor | None = None,
 ) -> torch.Tensor:
     if isinstance(epsilon, dict):
         loss_weights = epsilon
         epsilon = 1e-8
-    return compute_loss_terms(phdx, phdy, pair_mat, targets, weights, loss_weights, epsilon=epsilon)["total"]
+    return compute_loss_terms(
+        phdx,
+        phdy,
+        pair_mat,
+        targets,
+        weights,
+        loss_weights,
+        epsilon=epsilon,
+        spatial_weights=spatial_weights,
+    )["total"]

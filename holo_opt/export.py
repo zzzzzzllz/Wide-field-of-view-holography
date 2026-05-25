@@ -143,9 +143,17 @@ def _write_metrics_csv(path: Path, metrics: dict[str, Any]) -> None:
     score = metrics["summary"]["score"]
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["channel", "mse", "eta", "gray_level_error", "score"])
+        writer.writerow(["channel", "mse", "eta", "gray_level_error", "object_local_variance", "object_high_frequency_energy", "score"])
         for row in metrics["rows"]:
-            writer.writerow([row["channel"], row["mse"], row["eta"], row["gray_level_error"], score])
+            writer.writerow([
+                row["channel"],
+                row["mse"],
+                row["eta"],
+                row["gray_level_error"],
+                row.get("object_local_variance"),
+                row.get("object_high_frequency_energy"),
+                score,
+            ])
 
 
 def _write_rows_csv(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -264,7 +272,7 @@ def _plot_loss_curve(path: Path, losses: list[float] | np.ndarray) -> None:
 
 
 def _plot_loss_terms(path: Path, loss_terms_history: list[dict[str, float]]) -> None:
-    terms = ("image_mse", "eta_balance", "gray_monotonic", "phase_smoothness", "background")
+    terms = ("image_mse", "eta_balance", "gray_monotonic", "phase_smoothness", "background", "local_uniformity", "high_frequency")
     steps = np.asarray([row["step"] for row in loss_terms_history], dtype=np.float32)
     fig, ax = plt.subplots(figsize=(7.0, 4.5))
     try:

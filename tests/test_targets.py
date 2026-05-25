@@ -9,22 +9,18 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from holo_opt.line_targets import (
+    apply_outer_sink_border,
     build_center_weighted_line_image,
+    build_capped_grayscale_image,
     build_dimmed_grayscale_image,
-    generate_grayscale_target_artifacts,
+    generate_direct_grayscale_image_targets,
+    generate_direct_grayscale_image_targets_with_sink,
     generate_grayscale_image_targets,
     generate_line_art_targets,
     load_rgb_image_as_square_grayscale,
     split_grayscale_image_into_channel_tiles,
-    split_grayscale_image_into_channel_tiles_with_report,
 )
-from holo_opt.targets import (
-    generate_direct_image_targets,
-    generate_gray_step_targets,
-    load_mat_targets,
-    normalize_array,
-    validate_targets,
-)
+from holo_opt.targets import generate_gray_step_targets, load_mat_targets, normalize_array, validate_targets
 
 
 class TargetsTest(unittest.TestCase):
@@ -64,6 +60,18 @@ class TargetsTest(unittest.TestCase):
         self.assertGreater(float(weighted.max()), 0.0)
         self.assertGreater(float(weighted[4, 4]), float(weighted[4, 2]))
 
+    def test_build_capped_grayscale_image_preserves_gray_ratios_under_cap(self):
+        grayscale = np.array([[0.0, 0.25], [0.5, 1.0]], dtype=np.float32)
+
+        capped = build_capped_grayscale_image(grayscale, max_intensity=0.8)
+
+        self.assertEqual(capped.shape, (2, 2))
+        self.assertEqual(capped.dtype, np.float32)
+        self.assertLessEqual(float(capped.max()), 0.800001)
+        self.assertAlmostEqual(float(capped[0, 1]), 0.2, delta=1e-6)
+        self.assertAlmostEqual(float(capped[1, 0]), 0.4, delta=1e-6)
+        self.assertAlmostEqual(float(capped[1, 1]), 0.8, delta=1e-6)
+
     def test_build_dimmed_grayscale_image_darkens_broad_bright_blocks(self):
         grayscale = np.zeros((16, 16), dtype=np.float32)
         grayscale[2:14, 2:14] = 1.0
@@ -94,26 +102,6 @@ class TargetsTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "square channel count"):
             split_grayscale_image_into_channel_tiles(np.ones((8, 8), dtype=np.float32), expected_channels=8)
 
-    def test_split_grayscale_image_into_channel_tiles_with_report_balances_tiles(self):
-        grayscale = np.zeros((12, 12), dtype=np.float32)
-        grayscale[:4, :4] = 0.9
-        grayscale[4:8, 4:8] = 0.2
-        grayscale[8:, 8:] = 0.5
-
-        targets, report_rows = split_grayscale_image_into_channel_tiles_with_report(
-            grayscale,
-            expected_channels=9,
-            tile_balance_strength=0.5,
-            tile_balance_clip=1.3,
-        )
-
-        self.assertEqual(targets.shape, (9, 12, 12))
-        tile_rows = [row for row in report_rows if row["stage"] == "tile"]
-        self.assertEqual(len(tile_rows), 9)
-        self.assertLess(float(targets[0].mean()), 0.9)
-        self.assertGreater(float(targets[4].mean()), 0.0)
-        self.assertIn("budget_scale", tile_rows[0])
-
     def test_generate_line_art_targets_returns_repeated_channel_stack(self):
         image_path = self._make_workspace_image_path("cross.png")
         image = Image.new("RGB", (24, 24), color=(0, 0, 0))
@@ -128,21 +116,6 @@ class TargetsTest(unittest.TestCase):
         self.assertEqual(targets.dtype, np.float32)
         self.assertGreater(float(targets.max()), 0.0)
         self.assertAlmostEqual(float(targets.min()), 0.0)
-        np.testing.assert_allclose(targets[0], targets[1])
-
-    def test_generate_direct_image_targets_returns_repeated_channel_stack_without_extra_preprocessing(self):
-        image_path = self._make_workspace_image_path("direct.png")
-        image = Image.new("RGB", (24, 24), color=(0, 0, 0))
-        draw = ImageDraw.Draw(image)
-        draw.rectangle((4, 4, 20, 20), fill=(128, 128, 128))
-        image.save(image_path)
-
-        targets = generate_direct_image_targets(image_path, expected_channels=9, size=16)
-
-        self.assertEqual(targets.shape, (9, 16, 16))
-        self.assertEqual(targets.dtype, np.float32)
-        self.assertGreater(float(targets.max()), 0.0)
-        self.assertLess(float(targets.max()), 1.0)
         np.testing.assert_allclose(targets[0], targets[1])
 
     def test_generate_grayscale_image_targets_returns_dimmed_split_channel_stack(self):
@@ -165,24 +138,56 @@ class TargetsTest(unittest.TestCase):
         self.assertGreater(float(targets[8].mean()), float(targets[0].mean()))
         self.assertFalse(np.allclose(targets[0], targets[8]))
 
-    def test_generate_grayscale_target_artifacts_returns_report_and_stitched_target(self):
-        image_path = self._make_workspace_image_path("gradient.png")
+    def test_generate_direct_grayscale_image_targets_returns_capped_split_channel_stack(self):
+        image_path = self._make_workspace_image_path("direct_blocks.png")
         image = Image.new("RGB", (30, 30), color=(0, 0, 0))
         draw = ImageDraw.Draw(image)
-        for index in range(30):
-            value = min(255, 40 + index * 6)
-            draw.line((index, 0, index, 29), fill=(value, value, value), width=1)
+        for index in range(9):
+            row = index // 3
+            col = index % 3
+            value = 32 + index * 24
+            draw.rectangle((col * 10, row * 10, col * 10 + 9, row * 10 + 9), fill=(value, value, value))
         image.save(image_path)
 
-        artifacts = generate_grayscale_target_artifacts(image_path, expected_channels=9, size=18)
+        targets = generate_direct_grayscale_image_targets(image_path, expected_channels=9, size=18)
 
-        self.assertEqual(artifacts.targets.shape, (9, 18, 18))
-        self.assertEqual(artifacts.stitched_target.shape, (18, 18))
-        self.assertEqual(artifacts.source_grayscale.shape, (18, 18))
-        self.assertEqual(artifacts.processed_grayscale.shape, (18, 18))
-        self.assertEqual(artifacts.report_rows[0]["stage"], "source")
-        self.assertEqual(artifacts.report_rows[1]["stage"], "processed")
-        self.assertEqual(len([row for row in artifacts.report_rows if row["stage"] == "tile"]), 9)
+        self.assertEqual(targets.shape, (9, 18, 18))
+        self.assertEqual(targets.dtype, np.float32)
+        self.assertGreater(float(targets.max()), 0.0)
+        self.assertLessEqual(float(targets.max()), 0.65)
+        self.assertGreater(float(targets[8].mean()), float(targets[0].mean()))
+        self.assertFalse(np.allclose(targets[0], targets[8]))
+
+    def test_apply_outer_sink_border_creates_outer_black_frame(self):
+        grayscale = np.ones((10, 10), dtype=np.float32)
+        bordered, sink_mask = apply_outer_sink_border(grayscale, sink_border_ratio=0.2)
+
+        self.assertEqual(bordered.shape, (10, 10))
+        self.assertEqual(sink_mask.shape, (10, 10))
+        self.assertEqual(float(bordered[0, 0]), 0.0)
+        self.assertEqual(float(bordered[-1, -1]), 0.0)
+        self.assertEqual(float(bordered[5, 5]), 1.0)
+        self.assertEqual(float(sink_mask[0, 5]), 1.0)
+        self.assertEqual(float(sink_mask[5, 5]), 0.0)
+
+    def test_generate_direct_grayscale_image_targets_with_sink_returns_masked_tiles(self):
+        image_path = self._make_workspace_image_path("direct_sink_blocks.png")
+        image = Image.new("RGB", (30, 30), color=(0, 0, 0))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((2, 2, 27, 27), fill=(200, 200, 200))
+        image.save(image_path)
+
+        targets, spatial_weights = generate_direct_grayscale_image_targets_with_sink(
+            image_path,
+            expected_channels=9,
+            size=18,
+            sink_border_ratio=0.15,
+        )
+
+        self.assertEqual(targets.shape, (9, 18, 18))
+        self.assertEqual(spatial_weights.shape, (9, 18, 18))
+        self.assertLess(float(spatial_weights[0, 0, 0]), 0.5)
+        self.assertGreater(float(spatial_weights[4, 9, 9]), 0.5)
 
     def test_validate_targets_rejects_wrong_channel_count(self):
         targets = np.zeros((8, 16, 16), dtype=np.float32)

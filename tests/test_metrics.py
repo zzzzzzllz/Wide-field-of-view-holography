@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from holo_opt.metrics import channel_mse, compute_eta, evaluate_metrics, gray_level_stats
+from holo_opt.metrics import channel_mse, compute_eta, evaluate_metrics, gray_level_stats, object_noise_stats
 
 
 class MetricsTest(unittest.TestCase):
@@ -50,7 +50,22 @@ class MetricsTest(unittest.TestCase):
         result = evaluate_metrics(intensity, target)
         self.assertEqual(len(result["rows"]), 2)
         self.assertIn("score", result["summary"])
+        self.assertIn("object_local_variance", result["summary"])
+        self.assertIn("object_high_frequency_energy", result["summary"])
         self.assertTrue(np.isfinite(result["summary"]["score"]))
+
+    def test_object_noise_stats_penalizes_checkerboard_more_than_uniform_region(self):
+        target = np.ones((4, 4), dtype=np.float32)
+        uniform = np.full((4, 4), 0.5, dtype=np.float32)
+        checkerboard = np.array(
+            [[0.0, 1.0, 0.0, 1.0], [1.0, 0.0, 1.0, 0.0], [0.0, 1.0, 0.0, 1.0], [1.0, 0.0, 1.0, 0.0]],
+            dtype=np.float32,
+        )
+        uniform_stats = object_noise_stats(uniform, target)
+        checkerboard_stats = object_noise_stats(checkerboard, target)
+
+        self.assertGreater(checkerboard_stats["object_local_variance"], uniform_stats["object_local_variance"])
+        self.assertGreater(checkerboard_stats["object_high_frequency_energy"], uniform_stats["object_high_frequency_energy"])
 
     def test_metric_functions_require_same_3d_shape(self):
         intensities = np.ones((1, 4, 4), dtype=np.float32)

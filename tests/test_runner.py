@@ -87,6 +87,43 @@ class RunnerTest(unittest.TestCase):
         self.assertLessEqual(float(targets.max()), 0.65)
         self.assertFalse(np.allclose(targets[0], targets[4]))
 
+    def test_load_targets_for_grayscale_direct_config_returns_valid_shape(self):
+        temp_dir = Path.cwd() / "outputs" / "test_runner" / uuid.uuid4().hex
+        temp_dir.mkdir(parents=True, exist_ok=False)
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+        image_path = temp_dir / "direct_blocks.png"
+        image = Image.new("RGB", (24, 24), color=(0, 0, 0))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((5, 5, 19, 19), fill=(255, 255, 255))
+        image.save(image_path)
+
+        config = ExperimentConfig(size=8, target_mode="grayscale_direct", target_path=str(image_path))
+        targets = load_targets_for_config(config)
+
+        self.assertEqual(targets.shape, (9, 8, 8))
+        self.assertEqual(targets.dtype, np.float32)
+        self.assertGreater(float(targets.max()), 0.0)
+        self.assertLessEqual(float(targets.max()), 0.65)
+        self.assertFalse(np.allclose(targets[0], targets[4]))
+
+    def test_load_targets_for_grayscale_direct_sink_config_returns_valid_shape(self):
+        temp_dir = Path.cwd() / "outputs" / "test_runner" / uuid.uuid4().hex
+        temp_dir.mkdir(parents=True, exist_ok=False)
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+        image_path = temp_dir / "direct_sink_blocks.png"
+        image = Image.new("RGB", (24, 24), color=(0, 0, 0))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((3, 3, 20, 20), fill=(255, 255, 255))
+        image.save(image_path)
+
+        config = ExperimentConfig(size=8, target_mode="grayscale_direct_sink", target_path=str(image_path), sink_border_ratio=0.2)
+        targets = load_targets_for_config(config)
+
+        self.assertEqual(targets.shape, (9, 8, 8))
+        self.assertEqual(targets.dtype, np.float32)
+        self.assertGreater(float(targets.max()), 0.0)
+        self.assertLessEqual(float(targets.max()), 0.65)
+
     def test_compute_score_uses_score_config_weights(self):
         summary = {
             "image_error": 1.0,
@@ -114,6 +151,8 @@ class RunnerTest(unittest.TestCase):
                 "gray_monotonic_weight": 0.1,
                 "phase_smoothness_weight": 1e-4,
                 "background_weight": 0.0,
+                "local_uniformity_weight": 0.02,
+                "high_frequency_weight": 0.05,
             },
         )
 

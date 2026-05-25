@@ -50,6 +50,14 @@ class ConfigTest(unittest.TestCase):
         config = ExperimentConfig(target_mode="grayscale", target_path="blocks.png")
         validate_config(config)
 
+    def test_validate_config_accepts_grayscale_direct_mode_with_target_path(self):
+        config = ExperimentConfig(target_mode="grayscale_direct", target_path="blocks.png")
+        validate_config(config)
+
+    def test_validate_config_accepts_grayscale_direct_sink_mode_with_target_path(self):
+        config = ExperimentConfig(target_mode="grayscale_direct_sink", target_path="blocks.png", sink_border_ratio=0.15)
+        validate_config(config)
+
     def test_validate_config_requires_target_path_for_lineart_mode(self):
         config = ExperimentConfig(target_mode="lineart", target_path=None)
         with self.assertRaisesRegex(ValueError, "target_path"):
@@ -57,6 +65,16 @@ class ConfigTest(unittest.TestCase):
 
     def test_validate_config_requires_target_path_for_grayscale_mode(self):
         config = ExperimentConfig(target_mode="grayscale", target_path=None)
+        with self.assertRaisesRegex(ValueError, "target_path"):
+            validate_config(config)
+
+    def test_validate_config_requires_target_path_for_grayscale_direct_mode(self):
+        config = ExperimentConfig(target_mode="grayscale_direct", target_path=None)
+        with self.assertRaisesRegex(ValueError, "target_path"):
+            validate_config(config)
+
+    def test_validate_config_requires_target_path_for_grayscale_direct_sink_mode(self):
+        config = ExperimentConfig(target_mode="grayscale_direct_sink", target_path=None)
         with self.assertRaisesRegex(ValueError, "target_path"):
             validate_config(config)
 
@@ -68,6 +86,8 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(config.loss.gray_monotonic_weight, 0.1)
         self.assertEqual(config.loss.phase_smoothness_weight, 1e-4)
         self.assertEqual(config.loss.background_weight, 0.0)
+        self.assertEqual(config.loss.local_uniformity_weight, 0.02)
+        self.assertEqual(config.loss.high_frequency_weight, 0.05)
         self.assertEqual(config.diagnostic_interval, 1)
         self.assertEqual(data["diagnostic_interval"], 1)
         self.assertEqual(data["loss"]["image_weight"], 1.0)
@@ -141,6 +161,10 @@ class ConfigTest(unittest.TestCase):
                 config = ExperimentConfig(weight_update=weight_update)
                 with self.assertRaisesRegex(ValueError, "weight_update"):
                     validate_config(config)
+
+    def test_validate_config_rejects_invalid_sink_border_ratio(self):
+        with self.assertRaisesRegex(ValueError, "sink_border_ratio"):
+            validate_config(ExperimentConfig(target_mode="grayscale_direct_sink", target_path="blocks.png", sink_border_ratio=0.5))
 
     def test_validate_config_rejects_invalid_score_config(self):
         cases = (
