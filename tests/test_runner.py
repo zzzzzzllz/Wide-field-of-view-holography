@@ -190,6 +190,49 @@ class RunnerTest(unittest.TestCase):
         self.assertTrue((result.run_dir / "preprocess_comparison.png").exists())
         self.assertTrue((result.run_dir / "target_energy_report.csv").exists())
 
+    def test_run_experiment_exports_region_masks_when_enabled(self):
+        output_root = Path.cwd() / "outputs" / "test_runner" / uuid.uuid4().hex
+        output_root.mkdir(parents=True)
+        self.addCleanup(lambda: shutil.rmtree(output_root, ignore_errors=True))
+
+        config = ExperimentConfig(
+            size=8,
+            epochs_per_chunk=1,
+            outer_loops=1,
+            output_root=str(output_root),
+            label="region_masks",
+            device="cpu",
+        )
+        config.region_mask.enabled = True
+
+        result = run_experiment(config)
+
+        self.assertTrue((result.run_dir / "mask_summary.png").exists())
+        self.assertTrue((result.run_dir / "region_mask_report.csv").exists())
+
+    def test_run_experiment_records_signal_window_loss_terms(self):
+        output_root = Path.cwd() / "outputs" / "test_runner" / uuid.uuid4().hex
+        output_root.mkdir(parents=True)
+        self.addCleanup(lambda: shutil.rmtree(output_root, ignore_errors=True))
+
+        config = ExperimentConfig(
+            size=8,
+            epochs_per_chunk=1,
+            outer_loops=1,
+            output_root=str(output_root),
+            label="signal_window",
+            device="cpu",
+        )
+        config.region_mask.enabled = True
+        config.signal_window.image_loss_mode = "signal_window"
+
+        result = run_experiment(config)
+
+        with (result.run_dir / "loss_terms.csv").open(newline="", encoding="utf-8") as handle:
+            header = next(csv.reader(handle))
+        self.assertIn("signal_window", header)
+        self.assertIn("edge_mse", header)
+
     def test_run_experiment_prints_progress_at_interval(self):
         output_root = Path.cwd() / "outputs" / "test_runner" / uuid.uuid4().hex
         output_root.mkdir(parents=True)

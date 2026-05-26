@@ -452,6 +452,29 @@ channel 7: 左下   channel 8: 下中   channel 9: 右下
 
 每个图块会缩放到单个 channel 的完整 target 尺寸后参与优化。
 
+## Target 区域分区与 signal-window 损失
+
+如果重建图主体已经出现，但平坦灰度区或暗背景仍有明显雪花噪声，可以先预览 target 自动分区：
+
+```powershell
+py -m holo_opt.mask_preview --target-mode grayscale --target-path inputs/lineart_sources/demo_preview.png --size 128 --output-dir outputs/mask_preview
+```
+
+优先检查：
+
+- `mask_summary.png`
+  - 按通道显示 `target`、`edge`、`signal`、`flat`、`dark` 和 `relaxed` 分区。
+- `region_mask_report.csv`
+  - 汇总每个通道的分区覆盖比例、target 均值、峰值和边缘阈值。
+
+确认分区合理后，再尝试 signal-window 优化：
+
+```powershell
+py -m holo_opt.cli --target-mode grayscale --target-path inputs/lineart_sources/demo_preview.png --size 128 --epochs-per-chunk 10000 --outer-loops 1 --device cuda --selection-metric image_error --region-mask-enabled --image-loss-mode signal_window
+```
+
+该模式保留 `phdx/phdy` 耦合物理模型，不追求每通道独立相位图的理论最低 MSE；目标是降低平坦区和暗背景的视觉噪声，同时保护主体边缘。启用后，`loss_terms.csv` 会增加 `signal_window`、`edge_mse`、`signal_mse`、`flat_lowpass_mse`、`relaxed_lowpass_mse` 和 `dark_leakage` 等分项。
+
 如果你修改了：
 
 - target 生成逻辑

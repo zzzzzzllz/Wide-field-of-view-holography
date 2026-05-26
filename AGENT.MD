@@ -305,3 +305,11 @@ py -m holo_opt.cli --target-mode standard --size 64 --epochs-per-chunk 300 --out
 - 用户可见变化：不再支持 `--grayscale-channel-layout` 和 `--speckle-weight`。当前推荐主线是默认 `grayscale` tiled target，加 `--selection-metric image_error` 做 MSE 优先选择。
 - 算法细节：保留 `image_mse` 能量匹配修正、灰度预处理、tile 预算均衡、多 seed 批处理和 best state 指标选择；删除的两项不再出现在 `loss_terms.csv` 或 `loss_terms.png`。
 - 验证方式：需要运行 `py -m unittest discover -s tests -q`，并至少跑一次小尺寸 CLI smoke，确认已删除参数不会影响标准训练流程。
+
+## 2026-05-26 target 区域分区与 signal-window 损失
+
+- 改动动机：全图 MSE 会让 phase-only 或近似 phase-only 模型在大面积平坦灰度区域硬拟合高频误差，导致主体结构出现但平坦区仍有明显雪花噪声；需要把边缘、主体、平坦区、暗区和 relaxed 区分开优化。
+- 影响范围：新增 `holo_opt/region_masks.py` 和 `holo_opt/mask_preview.py`；`config.py`、`cli.py`、`runner.py`、`field.py`、`export.py` 接入区域 mask 和 opt-in 的 `signal_window` 图像损失；相关测试覆盖配置、CLI、mask 生成、导出、runner 和 field loss。
+- 用户可见变化：新增 `py -m holo_opt.mask_preview ...` 预览命令；正式运行可用 `--region-mask-enabled --image-loss-mode signal_window`；导出新增 `mask_summary.png` 和 `region_mask_report.csv`，启用 signal-window 时 `loss_terms.csv` 增加 `signal_window`、`edge_mse`、`signal_mse`、`flat_lowpass_mse`、`relaxed_lowpass_mse`、`dark_leakage`。
+- 算法细节：分区在最终 channel target 栈上逐通道生成，优先级为 `edge > signal > flat > dark > relaxed`；边缘和主体区强拟合，平坦和 relaxed 区只做低频拟合，暗区只惩罚超过阈值的亮泄漏。默认 `--image-loss-mode global` 保留历史行为，`signal_window` 和 `hybrid` 需要显式开启。
+- 验证方式：需要运行 `py -m unittest discover -s tests -q`；建议运行 `py -m holo_opt.mask_preview --target-mode grayscale --target-path inputs/lineart_sources/test_input.png --size 64 --output-dir outputs/mask_preview` 和小尺寸 CPU smoke；质量实验建议在 CUDA 上对比 `global`、`signal_window` 和 `hybrid`。

@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import torch
 import torch.fft as fft
+import torch.nn.functional as F
+
+from holo_opt.config import SignalWindowLossConfig
 
 
 def fftshift2(values: torch.Tensor) -> torch.Tensor:
@@ -39,6 +42,61 @@ def match_target_energy(intensities: torch.Tensor, targets: torch.Tensor, epsilo
     target_energy = targets.sum(dim=(-2, -1), keepdim=True)
     safe_energy = intensity_energy.clamp_min(epsilon)
     return intensities / safe_energy * target_energy
+
+
+def masked_mean(values: torch.Tensor, mask: torch.Tensor, epsilon: float = 1e-8) -> torch.Tensor:
+    numerator = torch.sum(values * mask)
+    denominator = torch.sum(mask).clamp_min(epsilon)
+    return numerator / denominator
+
+
+def _box_blur(values: torch.Tensor, sigma: float) -> torch.Tensor:
+    values = _as_channel_tensor(values, "values")
+    radius = max(1, int(round(float(sigma) * 2.0)))
+    kernel_size = 2 * radius + 1
+    channels = values.shape[0]
+    kernel = values.new_ones((channels, 1, kernel_size, kernel_size)) / float(kernel_size * kernel_size)
+    padded = F.pad(values.unsqueeze(0), (radius, radius, radius, radius), mode="replicate")
+    return F.conv2d(padded, kernel, groups=channels).squeeze(0)
+
+
+def compute_signal_window_loss_terms(
+    energy_matched_intensity: torch.Tensor,
+    targets: torch.Tensor,
+    normalized_intensity: torch.Tensor,
+    region_masks: dict[str, torch.Tensor],
+    config: SignalWindowLossConfig,
+    epsilon: float = 1e-8,
+) -> dict[str, torch.Tensor]:
+    energy_matched_intensity = _as_channel_tensor(energy_matched_intensity, "energy_matched_intensity")
+    targets = _as_channel_tensor(targets, "targets")
+    normalized_intensity = _as_channel_tensor(normalized_intensity, "normalized_intensity")
+    squared_error = (energy_matched_intensity - targets) ** 2
+    blurred_reconstruction = _box_blur(energy_matched_intensity, config.lowpass_sigma)
+    blurred_targets = _box_blur(targets, config.lowpass_sigma)
+    lowpass_error = (blurred_reconstruction - blurred_targets) ** 2
+    dark_error = torch.relu(normalized_intensity - float(config.dark_limit)) ** 2
+
+    edge_mse = masked_mean(squared_error, region_masks["edge"], epsilon)
+    signal_mse = masked_mean(squared_error, region_masks["signal"], epsilon)
+    flat_lowpass_mse = masked_mean(lowpass_error, region_masks["flat"], epsilon)
+    relaxed_lowpass_mse = masked_mean(lowpass_error, region_masks["relaxed"], epsilon)
+    dark_leakage = masked_mean(dark_error, region_masks["dark"], epsilon)
+    signal_window = (
+        float(config.edge_weight) * edge_mse
+        + float(config.signal_weight) * signal_mse
+        + float(config.flat_weight) * flat_lowpass_mse
+        + float(config.relaxed_weight) * relaxed_lowpass_mse
+        + float(config.dark_weight) * dark_leakage
+    )
+    return {
+        "signal_window": signal_window,
+        "edge_mse": edge_mse,
+        "signal_mse": signal_mse,
+        "flat_lowpass_mse": flat_lowpass_mse,
+        "relaxed_lowpass_mse": relaxed_lowpass_mse,
+        "dark_leakage": dark_leakage,
+    }
 
 
 def _as_channel_tensor(values: torch.Tensor, name: str) -> torch.Tensor:
@@ -143,6 +201,8 @@ def compute_loss_terms(
     weights: torch.Tensor,
     loss_weights: dict[str, float] | None = None,
     epsilon: float = 1e-8,
+    region_masks: dict[str, torch.Tensor] | None = None,
+    signal_window_config: SignalWindowLossConfig | None = None,
 ) -> dict[str, torch.Tensor]:
     """Compare simulated far-field channels against target channels and return loss terms."""
     if loss_weights is None:
@@ -155,18 +215,35 @@ def compute_loss_terms(
     energy_matched_intensity = match_target_energy(intensities, targets, epsilon=epsilon)
     per_channel = ((energy_matched_intensity - targets) ** 2).mean(dim=(-2, -1))
     image_mse = torch.sum(weights * per_channel)
+    image_component = image_mse
+    signal_terms: dict[str, torch.Tensor] = {}
+    if signal_window_config is not None and signal_window_config.image_loss_mode in {"signal_window", "hybrid"}:
+        if region_masks is None:
+            raise ValueError("region_masks are required for signal_window image loss mode")
+        signal_terms = compute_signal_window_loss_terms(
+            energy_matched_intensity,
+            targets,
+            normalized_intensity,
+            region_masks,
+            signal_window_config,
+            epsilon=epsilon,
+        )
+        if signal_window_config.image_loss_mode == "signal_window":
+            image_component = signal_terms["signal_window"]
+        else:
+            image_component = image_mse + float(signal_window_config.signal_window_weight) * signal_terms["signal_window"]
     eta_balance = channel_energy_balance_loss(intensities, normalized_target, epsilon=epsilon)
     gray_monotonic = gray_monotonic_loss(normalized_intensity, normalized_target)
     smoothness = phase_smoothness_loss(phdx, phdy)
     background = background_loss(normalized_intensity, normalized_target, epsilon=epsilon)
     total = (
-        float(loss_weights.get("image_weight", 1.0)) * image_mse
+        float(loss_weights.get("image_weight", 1.0)) * image_component
         + float(loss_weights.get("eta_balance_weight", 0.0)) * eta_balance
         + float(loss_weights.get("gray_monotonic_weight", 0.0)) * gray_monotonic
         + float(loss_weights.get("phase_smoothness_weight", 0.0)) * smoothness
         + float(loss_weights.get("background_weight", 0.0)) * background
     )
-    return {
+    result = {
         "total": total,
         "image_mse": image_mse,
         "eta_balance": eta_balance,
@@ -174,6 +251,8 @@ def compute_loss_terms(
         "phase_smoothness": smoothness,
         "background": background,
     }
+    result.update(signal_terms)
+    return result
 
 
 def training_loss(

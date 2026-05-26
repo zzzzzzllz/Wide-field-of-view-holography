@@ -158,11 +158,24 @@
         "--output-root",
         "outputs/holo_experiments",
         "--label",
-        "grayscale",
+        "grayscale_hybrid",
         "--selection-metric",
         "image_error",
         "--lr",
-        "0.01"
+        "0.01",
+        "--region-mask-enabled",
+        "--image-loss-mode",
+        "hybrid",
+        "--signal-window-weight",
+        "0.1",
+        "--flat-weight",
+        "0.3",
+        "--relaxed-weight",
+        "0.03",
+        "--dark-weight",
+        "0.03",
+        "--dark-limit",
+        "0.08"  
       ]
     }
   ]

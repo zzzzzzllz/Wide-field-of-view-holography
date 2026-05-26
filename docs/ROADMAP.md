@@ -80,6 +80,7 @@
 - `image_mse` 已从按最大像素归一化改为按 target 总能量匹配强度后再计算 MSE，优先压制“loss 下降但 summary 仍是雪花噪声”的失败模式。
 - `grayscale` 路径已经补上局部细节保留、低梯度区域压暗、3x3 tile 温和预算均衡，以及 `preprocess_comparison.png` / `target_energy_report.csv` 两类输入适配诊断。
 - best state 选择现在支持 `--selection-metric image_error`，用于 MSE 优先实验，避免综合 `score` 把灰阶和效率目标混入最终 outer 选择。
+- target 区域分区和 signal-window 损失已成为下一步图像质量主线：先用 `mask_preview` 审查自动分区，再用 opt-in 的 `signal_window` 模式减少平坦区散斑，保持 `phdx/phdy` 耦合模型不变。
 - 后续这条线继续推进时，不要重复实现基础灰度压缩，重点往 `preprocess_mode` 抽象、输入图可读报告增强和 `image2_assisted` 候选图生成上走。
 
 建议先做：
