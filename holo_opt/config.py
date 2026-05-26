@@ -57,6 +57,30 @@ class LossConfig:
 
 
 @dataclass
+class RegionMaskConfig:
+    enabled: bool = False
+    signal_threshold: float = 0.04
+    dark_threshold: float = 0.02
+    edge_quantile: float = 0.85
+    edge_dilation: int = 2
+    flat_gradient_quantile: float = 0.35
+    min_region_fraction: float = 0.002
+
+
+@dataclass
+class SignalWindowLossConfig:
+    image_loss_mode: str = "global"
+    signal_window_weight: float = 1.0
+    edge_weight: float = 2.0
+    signal_weight: float = 1.0
+    flat_weight: float = 0.15
+    relaxed_weight: float = 0.03
+    dark_weight: float = 0.2
+    dark_limit: float = 0.03
+    lowpass_sigma: float = 1.0
+
+
+@dataclass
 class GrayscalePreprocessConfig:
     max_intensity: float = 0.65
     gamma: float = 1.6
@@ -82,6 +106,7 @@ class ExperimentConfig:
     output_root: str = "outputs/holo_experiments"
     label: str = "quick9"
     diagnostic_interval: int = 1
+    selection_metric: str = "score"
     pair_mat: list[list[int]] = field(default_factory=lambda: [row[:] for row in DEFAULT_PAIR_MAT])
     physical: PhysicalConfig = field(default_factory=PhysicalConfig)
     guided_mode: GuidedModeConfig = field(default_factory=GuidedModeConfig)
@@ -89,6 +114,8 @@ class ExperimentConfig:
     score: ScoreConfig = field(default_factory=ScoreConfig)
     loss: LossConfig = field(default_factory=LossConfig)
     grayscale_preprocess: GrayscalePreprocessConfig = field(default_factory=GrayscalePreprocessConfig)
+    region_mask: RegionMaskConfig = field(default_factory=RegionMaskConfig)
+    signal_window: SignalWindowLossConfig = field(default_factory=SignalWindowLossConfig)
 
 
 def _all_positive(values: list[float]) -> bool:
@@ -120,6 +147,14 @@ def _is_positive_integer(value: object) -> bool:
     return type(value) is int and value > 0
 
 
+def _is_unit_interval(value: object, *, include_zero: bool = True, include_one: bool = True) -> bool:
+    if not isinstance(value, Real) or not isfinite(value):
+        return False
+    lower_ok = value >= 0.0 if include_zero else value > 0.0
+    upper_ok = value <= 1.0 if include_one else value < 1.0
+    return bool(lower_ok and upper_ok)
+
+
 def validate_config(config: ExperimentConfig) -> None:
     if not _is_positive_integer(config.n_channels):
         raise ValueError("n_channels must be positive")
@@ -135,6 +170,8 @@ def validate_config(config: ExperimentConfig) -> None:
         raise ValueError("lr must be positive")
     if not _is_positive_integer(config.diagnostic_interval):
         raise ValueError("diagnostic_interval must be positive")
+    if config.selection_metric not in {"score", "image_error", "gray_level_error", "efficiency_balance_penalty"}:
+        raise ValueError("selection_metric must be score, image_error, gray_level_error, or efficiency_balance_penalty")
     if not isinstance(config.pair_mat, (list, tuple)):
         raise ValueError("pair_mat length must equal n_channels")
     if len(config.pair_mat) != config.n_channels:
@@ -185,6 +222,38 @@ def validate_config(config: ExperimentConfig) -> None:
     ]
     if not _all_nonnegative(loss_values):
         raise ValueError("loss weights must be nonnegative and finite")
+    region = config.region_mask
+    if not isinstance(region.enabled, bool):
+        raise ValueError("region mask enabled must be boolean")
+    if not _is_unit_interval(region.signal_threshold):
+        raise ValueError("region mask signal_threshold must be in [0, 1]")
+    if not _is_unit_interval(region.dark_threshold):
+        raise ValueError("region mask dark_threshold must be in [0, 1]")
+    if not _is_unit_interval(region.edge_quantile, include_zero=False, include_one=False):
+        raise ValueError("region mask edge_quantile must be in (0, 1)")
+    if type(region.edge_dilation) is not int or region.edge_dilation < 0:
+        raise ValueError("region mask edge_dilation must be a nonnegative integer")
+    if not _is_unit_interval(region.flat_gradient_quantile, include_zero=False, include_one=False):
+        raise ValueError("region mask flat_gradient_quantile must be in (0, 1)")
+    if not _is_unit_interval(region.min_region_fraction):
+        raise ValueError("region mask min_region_fraction must be in [0, 1]")
+    signal_window = config.signal_window
+    if signal_window.image_loss_mode not in {"global", "signal_window", "hybrid"}:
+        raise ValueError("signal window image_loss_mode must be global, signal_window, or hybrid")
+    signal_window_values = [
+        signal_window.signal_window_weight,
+        signal_window.edge_weight,
+        signal_window.signal_weight,
+        signal_window.flat_weight,
+        signal_window.relaxed_weight,
+        signal_window.dark_weight,
+    ]
+    if not _all_nonnegative(signal_window_values):
+        raise ValueError("signal window weights must be nonnegative and finite")
+    if not _is_unit_interval(signal_window.dark_limit):
+        raise ValueError("signal window dark_limit must be in [0, 1]")
+    if not _is_positive_number(signal_window.lowpass_sigma):
+        raise ValueError("signal window lowpass_sigma must be positive")
     preprocess = config.grayscale_preprocess
     if not _all_positive(
         [

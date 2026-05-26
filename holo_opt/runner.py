@@ -19,6 +19,7 @@ from holo_opt.line_targets import (
     generate_line_art_targets,
 )
 from holo_opt.metrics import evaluate_metrics
+from holo_opt.region_masks import RegionMasks, generate_region_masks
 from holo_opt.targets import generate_gray_step_targets, load_mat_targets, validate_targets
 from holo_opt.weights import update_weights
 
@@ -101,6 +102,15 @@ def apply_score_config(metrics: dict[str, object], score_config: ScoreConfig) ->
     return metrics
 
 
+def selection_metric_value(metrics: dict[str, object], metric_name: str) -> float:
+    summary = metrics["summary"]
+    if not isinstance(summary, dict):
+        raise ValueError("metrics summary must be a dictionary")
+    if metric_name not in summary:
+        raise ValueError(f"selection metric not found: {metric_name}")
+    return float(summary[metric_name])
+
+
 def loss_config_to_dict(config: ExperimentConfig) -> dict[str, float]:
     return {
         "image_weight": config.loss.image_weight,
@@ -132,8 +142,20 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
     # channel should reproduce in the far field.
     target_bundle = load_targets_bundle_for_config(config)
     targets_np = target_bundle.targets
+    region_masks_np: RegionMasks | None = None
+    if config.region_mask.enabled or config.signal_window.image_loss_mode in {"signal_window", "hybrid"}:
+        region_masks_np = generate_region_masks(targets_np, config.region_mask)
     height, width = targets_np.shape[-2], targets_np.shape[-1]
     targets = torch.as_tensor(targets_np, dtype=torch.float32, device=device)
+    region_masks_torch: dict[str, torch.Tensor] | None = None
+    if region_masks_np is not None:
+        region_masks_torch = {
+            "edge": torch.as_tensor(region_masks_np.edge, dtype=torch.float32, device=device),
+            "signal": torch.as_tensor(region_masks_np.signal, dtype=torch.float32, device=device),
+            "flat": torch.as_tensor(region_masks_np.flat, dtype=torch.float32, device=device),
+            "dark": torch.as_tensor(region_masks_np.dark, dtype=torch.float32, device=device),
+            "relaxed": torch.as_tensor(region_masks_np.relaxed, dtype=torch.float32, device=device),
+        }
     pair_mat = torch.as_tensor(config.pair_mat, dtype=torch.float32, device=device)
 
     # Stage 2: initialize the proxy on-chip structure parameters. The optimizer
@@ -165,14 +187,32 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
     best_state: dict[str, Any] | None = None
     total_steps = config.outer_loops * config.epochs_per_chunk
     loss_weights = loss_config_to_dict(config)
-    loss_term_names = ("total", "image_mse", "eta_balance", "gray_monotonic", "phase_smoothness", "background")
+    loss_term_names = ["total", "image_mse", "eta_balance", "gray_monotonic", "phase_smoothness", "background"]
+    if config.signal_window.image_loss_mode in {"signal_window", "hybrid"}:
+        loss_term_names.extend([
+            "signal_window",
+            "edge_mse",
+            "signal_mse",
+            "flat_lowpass_mse",
+            "relaxed_lowpass_mse",
+            "dark_leakage",
+        ])
 
     # Stage 3: optimize the proxy structure so that every configured channel
     # produces a far-field image close to its own target image.
     for _outer_index in range(config.outer_loops):
         for _epoch_index in range(config.epochs_per_chunk):
             optimizer.zero_grad(set_to_none=True)
-            terms = compute_loss_terms(phdx, phdy, pair_mat, targets, weights, loss_weights)
+            terms = compute_loss_terms(
+                phdx,
+                phdy,
+                pair_mat,
+                targets,
+                weights,
+                loss_weights,
+                region_masks=region_masks_torch,
+                signal_window_config=config.signal_window,
+            )
             loss = terms["total"]
             if not torch.isfinite(loss).item():
                 raise RuntimeError("non-finite loss encountered")
@@ -186,12 +226,7 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
                 print(progress_message, flush=True)
             loss_terms_history.append({
                 "step": float(len(losses)),
-                "total": loss_value,
-                "image_mse": float(term_values[1]),
-                "eta_balance": float(term_values[2]),
-                "gray_monotonic": float(term_values[3]),
-                "phase_smoothness": float(term_values[4]),
-                "background": float(term_values[5]),
+                **{name: float(term_values[index]) for index, name in enumerate(loss_term_names)},
             })
 
         with torch.no_grad():
@@ -200,6 +235,7 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
             raise RuntimeError("non-finite intensities encountered")
         metrics = apply_score_config(evaluate_metrics(intensities_np, targets_np), config.score)
         score = float(metrics["summary"]["score"])  # type: ignore[index]
+        selection_value = selection_metric_value(metrics, config.selection_metric)
         outer_number = _outer_index + 1
         summary = metrics["summary"]  # type: ignore[assignment]
         diagnostics.append({
@@ -215,8 +251,8 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
         })
         if outer_number % config.diagnostic_interval == 0:
             outer_summaries.append((outer_number, intensities_np.copy()))
-        if np.isfinite(score) and score < best_score:
-            best_score = score
+        if np.isfinite(selection_value) and selection_value < best_score:
+            best_score = selection_value
             best_state = {
                 "intensities": intensities_np.copy(),
                 "phdx": phdx.detach().cpu().numpy().astype(np.float32).copy(),
@@ -262,6 +298,7 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
         loss_terms_history=loss_terms_history,
         outer_summaries=outer_summaries,
         grayscale_artifacts=target_bundle.grayscale_artifacts,
+        region_masks=region_masks_np,
     )
     if device.type == "cuda":
         torch.cuda.synchronize()

@@ -25,10 +25,11 @@
 - `holo_opt/config.py`：实验配置、物理参数、损失权重、评分权重、默认级次和配置校验。
 - `holo_opt/field.py`：光场强度计算、训练损失和各损失分项计算。
 - `holo_opt/runner.py`：实验主流程，包括目标加载、优化循环、权重更新、诊断记录、进度打印和结果导出。
+- `holo_opt/batch.py`：多 seed 批处理入口，复用单次运行配置，逐个 seed 运行并导出 `seed_summary.csv`。
 - `holo_opt/export.py`：导出运行目录、CSV/JSON/NPZ 数据以及 PNG 可视化图。
 - `holo_opt/metrics.py`：重建质量、效率、灰度级误差等评估指标。
 - `holo_opt/targets.py`：标准灰度阶梯目标和 `.mat` 目标加载。
-- `holo_opt/line_targets.py`：从普通 RGB 图片生成黑底线稿灰度目标图，并重复为多通道 target 栈。
+- `holo_opt/line_targets.py`：从普通 RGB 图片生成线稿或灰度 target；灰度模式按 3x3 切块分配到 9 个通道。
 - `holo_opt/lineart_preview.py`：只做线稿预览，不启动优化；输入一张 RGB 图片，导出原图副本和处理后的线稿图。
 - `holo_opt/weights.py`：基于效率和通道误差的通道权重更新。
 - `tests/`：使用 `unittest` 编写的单元测试和导出/运行烟雾测试。
@@ -39,13 +40,13 @@
 1. 目标图像生成与输入准备
    - `config.py`：定义这次实验的 target 模式、尺寸、通道数和输出路径。
    - `targets.py`：生成标准灰度阶梯 target，或从 `.mat` 文件读取 target 栈。
-   - `line_targets.py`：从一张 RGB 图片自动提线，生成黑底白线、线中心更亮的灰度 target 图，再复制为多通道 target 栈。
+   - `line_targets.py`：从一张 RGB 图片自动提线或生成压暗灰度图；灰度 target 按 3x3 切块分配到 9 个通道。
    - `lineart_preview.py`：给第一部分单独预览用，先验证“取线条效果”再进入优化。
    - `cli.py`：把命令行参数装配成统一配置对象。
 2. 片上结构代理优化与远场模拟
    - `field.py`：使用 `phdx`、`phdy` 和级次对每个通道做 FFT 远场模拟，并计算损失项。
    - `weights.py`：根据各通道误差和效率做动态重加权。
-   - `runner.py`：串起 target 加载、参数初始化、优化循环、诊断记录和最优状态选择。
+  - `runner.py`：串起 target 加载、参数初始化、优化循环、诊断记录和最优状态选择。
 3. 评估、导出与结果管理
    - `metrics.py`：计算每个通道和整体的图像误差、灰度误差、效率和 score。
    - `export.py`：把图、表、配置和相位结果写到 `outputs/holo_experiments/`。
@@ -95,9 +96,11 @@
 
 - 已落地能力：
   - `LossConfig` 和 `diagnostic_interval` 已进入配置层。
-  - target 侧已支持 3 种输入模式：`standard`、`mat`、`lineart`。
-  - `field.py` 已支持结构化损失项：`image_mse`、`eta_balance`、`gray_monotonic`、`phase_smoothness`、`background`。
+  - target 侧已支持 4 种输入模式：`standard`、`mat`、`lineart`、`grayscale`。
+  - `field.py` 已支持结构化损失项：`image_mse`、`eta_balance`、`gray_monotonic`、`phase_smoothness`、`background`；`image_mse` 现在按 target 总能量匹配重建强度后再计算，避免最大亮噪点归一化导致 loss 下降但图像仍是雪花噪声。
   - `runner.py` 已记录 `loss_terms_history`、`diagnostics`、`outer_summaries`，并按 score 选最优状态。
+  - best state 选择支持 `--selection-metric score|image_error|gray_level_error|efficiency_balance_penalty`，默认 `score`；做 MSE 优先实验时使用 `image_error`。
+  - `batch.py` 已支持多 seed 批处理，输出 `seed_summary.csv` 并标出最低 score 的 best seed。
   - `export.py` 已导出 `diagnostics.csv`、`loss_terms.csv`、`loss_terms.png`、`outer_###_summary.png`。
   - `cli.py` 和 `.vscode/launch.json` 已暴露 diagnostic/quality 工作流。
   - 相关测试已覆盖配置、损失项、导出和 runner 烟雾流程。
@@ -153,6 +156,18 @@ py -m holo_opt.cli --target-mode lineart --target-path D:/path/to/input.png --si
 py -m holo_opt.lineart_preview --input demo.png --size 256
 ```
 
+多 seed 对比运行示例：
+
+```powershell
+py -m holo_opt.batch --target-mode standard --size 64 --epochs-per-chunk 300 --outer-loops 3 --device cuda --output-root outputs/holo_experiments --label seed_probe --seeds 42 43 44
+```
+
+MSE 优先选择 best outer 示例：
+
+```powershell
+py -m holo_opt.cli --target-mode grayscale --target-path D:/path/to/input.png --size 128 --epochs-per-chunk 10000 --outer-loops 10 --device cuda --output-root outputs/holo_experiments --label mse_focused --selection-metric image_error
+```
+
 线稿预览与正式优化的路径约定：
 
 - 建议把原始图片放到 `inputs/lineart_sources/`
@@ -196,7 +211,8 @@ py -m holo_opt.cli --target-mode standard --size 64 --epochs-per-chunk 300 --out
 - `gray_levels.png`：灰度级响应曲线或灰度误差图。
 - `diagnostics.csv`：每个 outer loop 的 `loss`、`score`、`mean_eta`、`image_error`、`gray_level_error` 等诊断值。
 - `loss_terms.csv`：每一步的损失分项。
-- `loss_terms.png`：`image_mse`、`eta_balance`、`gray_monotonic`、`phase_smoothness` 和 `background` 五个损失分项的曲线。
+- `loss_terms.png`：`image_mse`、`eta_balance`、`gray_monotonic`、`phase_smoothness` 和 `background` 损失分项的曲线。
+- `seed_summary.csv`：多 seed 批处理目录下的汇总表，包含每个 seed 的 `run_dir`、`score`、`image_error`、`gray_level_error` 和 `best` 标记。
 
 结果判断优先级：
 
@@ -213,6 +229,7 @@ py -m holo_opt.cli --target-mode standard --size 64 --epochs-per-chunk 300 --out
 - `eta_balance` 高：各通道效率差距大，考虑提高 `--eta-balance-weight` 或检查权重更新。
 - `background` 高：暗背景太亮，启用并提高 `--background-weight`。
 - loss 持续下降但图像不改善：不要只加步数，重点检查 `image_mse` 是否也在下降。
+- 如果 `loss` 和 `image_mse` 下降但 `summary.png` 仍像雪花，优先检查当前代码是否仍在使用旧的“最大值归一化强度 MSE”；当前基线应使用按 target 总能量匹配后的强度 MSE。
 
 ## 维护注意事项
 
@@ -256,3 +273,43 @@ py -m holo_opt.cli --target-mode standard --size 64 --epochs-per-chunk 300 --out
 - 用户可见变化：每次运行 `py -m holo_opt.cli ...` 时，开始阶段会打印 `Device: cuda` 或 `Device: cpu`；导出完成后会打印 `Run finished in X.X s`。原有导出文件名、CSV/PNG/NPZ 内容约定不变。
 - 算法细节：远场强度计算现在一次构造 `(channels, H, W)` phase stack 并批量执行 FFT，避免每个通道单独调用 FFT；灰阶单调损失按通道和灰阶 bin 聚合均值，只比较相邻且实际存在像素的灰阶对，不再跨过缺失灰阶比较。训练循环继续完整记录 `loss_terms.csv`，但减少了每步反复 `.cpu().item()` 带来的同步开销。
 - 验证方式：需要运行 `py -m unittest discover -s tests -q`；建议再运行 `py -m holo_opt.cli --target-mode standard --size 64 --epochs-per-chunk 3 --outer-loops 1 --device cpu --output-root outputs/holo_experiments --label timing_smoke`。如果本机 CUDA 可用，再运行同等 `--device cuda` smoke，确认终端显示 `Device: cuda` 且流程完成。
+
+## 2026-05-25 image_mse 能量匹配修正
+
+- 改动动机：排查“结果图像质量太差、全部都是噪点”时发现，旧版 `image_mse` 使用每通道最大像素归一化后的强度图计算 MSE。远场亮噪点会主导最大值，导致 loss 可以下降，但 `summary.png` 仍然是雪花噪声。
+- 影响范围：`holo_opt/field.py` 新增 `match_target_energy()`，`compute_loss_terms()` 的 `image_mse` 改为先把每个通道的重建强度按 target 总能量缩放，再与原始 target 计算 MSE；`tests/test_field.py` 新增回归测试覆盖该计算方式；`docs/ROADMAP.md` 同步更新当前基线。
+- 用户可见变化：不新增命令行参数，不改变导出文件名。正式优化时，`image_mse` 会更直接惩罚散斑噪声和错误能量分布；判断效果仍优先看 `summary.png`、`outer_###_summary.png`、`loss_terms.csv` 和 `diagnostics.csv`。
+- 算法细节：辅助损失仍使用原有接口；`gray_monotonic` 和 `background` 继续基于最大值归一化图像做灰阶/背景诊断，`image_mse` 则改为固定能量预算下的强度拟合，避免单个亮噪点把整个通道缩放到看似合理。
+- 验证方式：本次需要运行 `py -m unittest tests.test_field -q`、`py -m unittest discover -s tests -q`，并建议运行 `py -m holo_opt.cli --target-mode standard --size 16 --epochs-per-chunk 2 --outer-loops 2 --device cpu --output-root outputs/holo_experiments --label smoke` 做流程 smoke。若要看质量变化，再用 CUDA 跑 `--size 64 --epochs-per-chunk 300 --outer-loops 5` 级别的诊断实验。
+
+## 2026-05-25 多 seed 批处理入口
+
+- 改动动机：固定单 seed 运行容易把随机初相的偶然失败误判为算法失败；多 seed 对比可以更稳地选择当前配置下最好的初始化。
+- 影响范围：新增 `holo_opt/batch.py`，复用 `holo_opt.cli` 的参数解析和 `run_experiment()`；每个 seed 在批处理目录的 `runs/` 下生成独立实验目录；`tests/test_batch.py` 覆盖参数解析、默认 seed 行为和 summary 写出。
+- 用户可见变化：新增命令 `py -m holo_opt.batch ... --seeds 42 43 44`。运行后会在 `outputs/holo_experiments/<label>_seeds_<timestamp>/seed_summary.csv` 写出各 seed 指标，并用 `best=1` 标出最低 score。
+- 算法细节：不改变单次优化逻辑，不改变 score 公式；batch 只负责复制基础配置、替换 seed 和 label，然后汇总每次 `final_metrics["summary"]`。
+- 验证方式：需要运行 `py -m unittest discover -s tests -q`；建议运行 `py -m holo_opt.batch --target-mode standard --size 8 --epochs-per-chunk 1 --outer-loops 1 --device cpu --output-root outputs/holo_experiments --label batch_smoke --seeds 1 2`，确认生成 `seed_summary.csv`。
+
+## 2026-05-25 best state 选择指标配置
+
+- 改动动机：综合 `score` 会混入灰阶单调性、效率均衡和平均效率，不等价于图像 MSE；当实验目标是直接压低 `image_error` 时，按 `score` 选最终 outer 可能选不到 MSE 最低的状态。
+- 影响范围：`holo_opt/config.py` 新增 `selection_metric`；`holo_opt/cli.py` 新增 `--selection-metric`；`holo_opt/runner.py` 在保留诊断 `score` 的同时，按配置指标选择 best state；测试覆盖配置、CLI 和 runner 选择行为。
+- 用户可见变化：默认仍是 `--selection-metric score`，历史命令行为不变。MSE 优先实验使用 `--selection-metric image_error`；可选值还有 `gray_level_error` 和 `efficiency_balance_penalty`。
+- 算法细节：该参数只改变“保存哪一轮 outer 的结果”，不改变训练 loss，也不改变 `diagnostics.csv` 的记录。所有可选指标当前都是越低越好。
+- 验证方式：需要运行 `py -m unittest discover -s tests -q`；MSE 优先实测可配合 `--gray-monotonic-weight 0.0` 做对照，判断灰阶单调项是否牵制了 `image_error`。
+
+## 2026-05-25 实验性冗余入口移除
+
+- 改动动机：完整图多通道布局和额外平坦区抑制损失在实测中没有成为 MSE 主线，继续保留会增加调参入口和判断成本。
+- 影响范围：移除灰度完整图多通道 CLI/配置/target 分支，灰度图输入固定回 3x3 tile 分配；移除额外平坦区抑制损失的配置、CLI、训练项、导出项和测试。
+- 用户可见变化：不再支持 `--grayscale-channel-layout` 和 `--speckle-weight`。当前推荐主线是默认 `grayscale` tiled target，加 `--selection-metric image_error` 做 MSE 优先选择。
+- 算法细节：保留 `image_mse` 能量匹配修正、灰度预处理、tile 预算均衡、多 seed 批处理和 best state 指标选择；删除的两项不再出现在 `loss_terms.csv` 或 `loss_terms.png`。
+- 验证方式：需要运行 `py -m unittest discover -s tests -q`，并至少跑一次小尺寸 CLI smoke，确认已删除参数不会影响标准训练流程。
+
+## 2026-05-26 target 区域分区与 signal-window 损失
+
+- 改动动机：全图 MSE 会让 phase-only 或近似 phase-only 模型在大面积平坦灰度区域硬拟合高频误差，导致主体结构出现但平坦区仍有明显雪花噪声；需要把边缘、主体、平坦区、暗区和 relaxed 区分开优化。
+- 影响范围：新增 `holo_opt/region_masks.py` 和 `holo_opt/mask_preview.py`；`config.py`、`cli.py`、`runner.py`、`field.py`、`export.py` 接入区域 mask 和 opt-in 的 `signal_window` 图像损失；相关测试覆盖配置、CLI、mask 生成、导出、runner 和 field loss。
+- 用户可见变化：新增 `py -m holo_opt.mask_preview ...` 预览命令；正式运行可用 `--region-mask-enabled --image-loss-mode signal_window`；导出新增 `mask_summary.png` 和 `region_mask_report.csv`，启用 signal-window 时 `loss_terms.csv` 增加 `signal_window`、`edge_mse`、`signal_mse`、`flat_lowpass_mse`、`relaxed_lowpass_mse`、`dark_leakage`。
+- 算法细节：分区在最终 channel target 栈上逐通道生成，优先级为 `edge > signal > flat > dark > relaxed`；边缘和主体区强拟合，平坦和 relaxed 区只做低频拟合，暗区只惩罚超过阈值的亮泄漏。默认 `--image-loss-mode global` 保留历史行为，`signal_window` 和 `hybrid` 需要显式开启。
+- 验证方式：需要运行 `py -m unittest discover -s tests -q`；建议运行 `py -m holo_opt.mask_preview --target-mode grayscale --target-path inputs/lineart_sources/test_input.png --size 64 --output-dir outputs/mask_preview` 和小尺寸 CPU smoke；质量实验建议在 CUDA 上对比 `global`、`signal_window` 和 `hybrid`。

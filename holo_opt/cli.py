@@ -11,6 +11,8 @@ from holo_opt.config import (
     GuidedModeConfig,
     LossConfig,
     PhysicalConfig,
+    RegionMaskConfig,
+    SignalWindowLossConfig,
     WeightUpdateConfig,
 )
 
@@ -31,6 +33,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-root", default="outputs/holo_experiments")
     parser.add_argument("--label", default="quick9")
     parser.add_argument("--diagnostic-interval", type=int, default=1)
+    parser.add_argument(
+        "--selection-metric",
+        choices=["score", "image_error", "gray_level_error", "efficiency_balance_penalty"],
+        default="score",
+    )
     parser.add_argument("--lambda-nm", type=float, default=532.0)
     parser.add_argument("--px-nm", type=float, default=830.0)
     parser.add_argument("--py-nm", type=float, default=830.0)
@@ -50,6 +57,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--grayscale-detail-boost", type=float, default=0.2)
     parser.add_argument("--grayscale-tile-balance-strength", type=float, default=0.35)
     parser.add_argument("--grayscale-tile-balance-clip", type=float, default=1.35)
+    parser.add_argument("--region-mask-enabled", action="store_true", default=False)
+    parser.add_argument("--region-signal-threshold", type=float, default=0.04)
+    parser.add_argument("--region-dark-threshold", type=float, default=0.02)
+    parser.add_argument("--region-edge-quantile", type=float, default=0.85)
+    parser.add_argument("--region-edge-dilation", type=int, default=2)
+    parser.add_argument("--region-flat-gradient-quantile", type=float, default=0.35)
+    parser.add_argument("--region-min-fraction", type=float, default=0.002)
+    parser.add_argument("--image-loss-mode", choices=["global", "signal_window", "hybrid"], default="global")
+    parser.add_argument("--signal-window-weight", type=float, default=1.0)
+    parser.add_argument("--edge-weight", type=float, default=2.0)
+    parser.add_argument("--signal-weight", type=float, default=1.0)
+    parser.add_argument("--flat-weight", type=float, default=0.15)
+    parser.add_argument("--relaxed-weight", type=float, default=0.03)
+    parser.add_argument("--dark-weight", type=float, default=0.2)
+    parser.add_argument("--dark-limit", type=float, default=0.03)
+    parser.add_argument("--lowpass-sigma", type=float, default=1.0)
     return parser
 
 
@@ -67,6 +90,7 @@ def config_from_args(args: argparse.Namespace) -> ExperimentConfig:
         output_root=args.output_root,
         label=args.label,
         diagnostic_interval=args.diagnostic_interval,
+        selection_metric=args.selection_metric,
         physical=PhysicalConfig(
             lambda_nm=args.lambda_nm,
             px_nm=args.px_nm,
@@ -94,6 +118,26 @@ def config_from_args(args: argparse.Namespace) -> ExperimentConfig:
             detail_boost=args.grayscale_detail_boost,
             tile_balance_strength=args.grayscale_tile_balance_strength,
             tile_balance_clip=args.grayscale_tile_balance_clip,
+        ),
+        region_mask=RegionMaskConfig(
+            enabled=args.region_mask_enabled,
+            signal_threshold=args.region_signal_threshold,
+            dark_threshold=args.region_dark_threshold,
+            edge_quantile=args.region_edge_quantile,
+            edge_dilation=args.region_edge_dilation,
+            flat_gradient_quantile=args.region_flat_gradient_quantile,
+            min_region_fraction=args.region_min_fraction,
+        ),
+        signal_window=SignalWindowLossConfig(
+            image_loss_mode=args.image_loss_mode,
+            signal_window_weight=args.signal_window_weight,
+            edge_weight=args.edge_weight,
+            signal_weight=args.signal_weight,
+            flat_weight=args.flat_weight,
+            relaxed_weight=args.relaxed_weight,
+            dark_weight=args.dark_weight,
+            dark_limit=args.dark_limit,
+            lowpass_sigma=args.lowpass_sigma,
         ),
     )
 

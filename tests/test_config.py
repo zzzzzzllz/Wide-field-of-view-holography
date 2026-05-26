@@ -7,7 +7,9 @@ from holo_opt.config import (
     GuidedModeConfig,
     LossConfig,
     PhysicalConfig,
+    RegionMaskConfig,
     ScoreConfig,
+    SignalWindowLossConfig,
     WeightUpdateConfig,
     config_to_dict,
     validate_config,
@@ -41,6 +43,16 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(data["n_channels"], 9)
         self.assertEqual(data["pair_mat"][0], [-2, 2])
         self.assertEqual(data["physical"]["lambda_nm"], 532.0)
+        self.assertEqual(data["selection_metric"], "score")
+
+    def test_validate_config_accepts_image_error_selection_metric(self):
+        config = ExperimentConfig(selection_metric="image_error")
+        validate_config(config)
+
+    def test_validate_config_rejects_unknown_selection_metric(self):
+        config = ExperimentConfig(selection_metric="mean_eta")
+        with self.assertRaisesRegex(ValueError, "selection_metric"):
+            validate_config(config)
 
     def test_validate_config_accepts_lineart_mode_with_target_path(self):
         config = ExperimentConfig(target_mode="lineart", target_path="outline.png")
@@ -81,6 +93,52 @@ class ConfigTest(unittest.TestCase):
             with self.subTest(loss=loss):
                 config = ExperimentConfig(loss=loss)
                 with self.assertRaisesRegex(ValueError, "loss weights"):
+                    validate_config(config)
+
+    def test_validate_config_accepts_region_mask_and_signal_window_defaults(self):
+        config = ExperimentConfig()
+
+        validate_config(config)
+
+        self.assertFalse(config.region_mask.enabled)
+        self.assertEqual(config.signal_window.image_loss_mode, "global")
+
+    def test_validate_config_rejects_invalid_region_mask_values(self):
+        cases = (
+            RegionMaskConfig(signal_threshold=-0.1),
+            RegionMaskConfig(signal_threshold=1.1),
+            RegionMaskConfig(dark_threshold=-0.1),
+            RegionMaskConfig(dark_threshold=1.1),
+            RegionMaskConfig(edge_quantile=0.0),
+            RegionMaskConfig(edge_quantile=1.0),
+            RegionMaskConfig(edge_dilation=-1),
+            RegionMaskConfig(flat_gradient_quantile=0.0),
+            RegionMaskConfig(flat_gradient_quantile=1.0),
+            RegionMaskConfig(min_region_fraction=-0.1),
+        )
+        for region_mask in cases:
+            with self.subTest(region_mask=region_mask):
+                config = ExperimentConfig(region_mask=region_mask)
+                with self.assertRaisesRegex(ValueError, "region mask"):
+                    validate_config(config)
+
+    def test_validate_config_rejects_invalid_signal_window_values(self):
+        cases = (
+            SignalWindowLossConfig(image_loss_mode="invalid"),
+            SignalWindowLossConfig(signal_window_weight=-1.0),
+            SignalWindowLossConfig(edge_weight=-1.0),
+            SignalWindowLossConfig(signal_weight=-1.0),
+            SignalWindowLossConfig(flat_weight=-1.0),
+            SignalWindowLossConfig(relaxed_weight=-1.0),
+            SignalWindowLossConfig(dark_weight=-1.0),
+            SignalWindowLossConfig(dark_limit=-0.1),
+            SignalWindowLossConfig(dark_limit=1.1),
+            SignalWindowLossConfig(lowpass_sigma=0.0),
+        )
+        for signal_window in cases:
+            with self.subTest(signal_window=signal_window):
+                config = ExperimentConfig(signal_window=signal_window)
+                with self.assertRaisesRegex(ValueError, "signal window"):
                     validate_config(config)
 
     def test_validate_config_rejects_invalid_diagnostic_interval(self):

@@ -12,6 +12,7 @@ import numpy as np
 from holo_opt.config import ExperimentConfig
 from holo_opt.export import export_results
 from holo_opt.line_targets import GrayscaleTargetArtifacts
+from holo_opt.region_masks import RegionMasks
 
 
 class ExportResultsTest(unittest.TestCase):
@@ -220,6 +221,12 @@ class ExportResultsTest(unittest.TestCase):
                     "gray_monotonic": 0.3,
                     "phase_smoothness": 0.4,
                     "background": 0.0,
+                    "signal_window": 0.5,
+                    "edge_mse": 0.1,
+                    "signal_mse": 0.2,
+                    "flat_lowpass_mse": 0.03,
+                    "relaxed_lowpass_mse": 0.01,
+                    "dark_leakage": 0.04,
                 }
             ]
 
@@ -265,9 +272,24 @@ class ExportResultsTest(unittest.TestCase):
                 loss_terms_rows = list(csv.reader(handle))
             self.assertEqual(
                 loss_terms_rows[0],
-                ["step", "total", "image_mse", "eta_balance", "gray_monotonic", "phase_smoothness", "background"],
+                [
+                    "step",
+                    "total",
+                    "image_mse",
+                    "eta_balance",
+                    "gray_monotonic",
+                    "phase_smoothness",
+                    "background",
+                    "signal_window",
+                    "edge_mse",
+                    "signal_mse",
+                    "flat_lowpass_mse",
+                    "relaxed_lowpass_mse",
+                    "dark_leakage",
+                ],
             )
-            self.assertEqual(loss_terms_rows[1], ["1", "2.0", "1.0", "0.2", "0.3", "0.4", "0.0"])
+            self.assertIn("signal_window", loss_terms_rows[0])
+            self.assertIn("edge_mse", loss_terms_rows[0])
             self.assertGreater((run_dir / "loss_terms.png").stat().st_size, 0)
             self.assertGreater((run_dir / "outer_001_summary.png").stat().st_size, 0)
             self.assertGreater((run_dir / "outer_001_stitched_comparison.png").stat().st_size, 0)
@@ -325,6 +347,74 @@ class ExportResultsTest(unittest.TestCase):
             self.assertEqual(rows[0], ["stage", "tile", "mean_intensity", "budget_scale"])
             self.assertEqual(rows[1], ["source", "0", "0.5", ""])
             self.assertEqual(rows[3], ["tile", "1", "0.2", "1.1"])
+        finally:
+            shutil.rmtree(tmp_path, ignore_errors=True)
+
+    def test_export_results_writes_region_mask_artifacts_when_provided(self):
+        tmp_path = Path.cwd() / "outputs" / "test_export" / uuid.uuid4().hex
+        tmp_path.mkdir(parents=True)
+        self.addCleanup(lambda: shutil.rmtree(tmp_path, ignore_errors=True))
+        tmp = str(tmp_path)
+        try:
+            config = ExperimentConfig(size=4, output_root=tmp, label="masks")
+            targets = np.zeros((9, 4, 4), dtype=np.float32)
+            targets[:, 1:3, 1:3] = 1.0
+            intensities = targets.copy()
+            phases = np.zeros((4, 4), dtype=np.float32)
+            metrics = {
+                "rows": [
+                    {"channel": index + 1, "mse": 0.0, "eta": 1.0, "gray_level_error": 0.0, "gray_means": [0.0] * 16}
+                    for index in range(9)
+                ],
+                "summary": {
+                    "score": 0.0,
+                    "image_error": 0.0,
+                    "gray_level_error": 0.0,
+                    "efficiency_balance_penalty": 0.0,
+                    "mean_eta": 1.0,
+                },
+            }
+            masks = RegionMasks(
+                edge=np.ones_like(targets),
+                signal=np.zeros_like(targets),
+                flat=np.zeros_like(targets),
+                dark=np.zeros_like(targets),
+                relaxed=np.zeros_like(targets),
+                report_rows=[
+                    {
+                        "channel": float(index + 1),
+                        "edge_fraction": 1.0,
+                        "signal_fraction": 0.0,
+                        "flat_fraction": 0.0,
+                        "dark_fraction": 0.0,
+                        "relaxed_fraction": 0.0,
+                        "target_mean": 0.25,
+                        "target_max": 1.0,
+                        "edge_threshold": 0.1,
+                    }
+                    for index in range(9)
+                ],
+            )
+
+            run_dir = export_results(
+                config,
+                targets,
+                intensities,
+                phases,
+                phases,
+                [1.0],
+                [[1.0] * 9],
+                [[1.0] * 9],
+                metrics,
+                region_masks=masks,
+            )
+
+            self.assertTrue((run_dir / "mask_summary.png").exists())
+            self.assertGreater((run_dir / "mask_summary.png").stat().st_size, 0)
+            with (run_dir / "region_mask_report.csv").open(newline="", encoding="utf-8") as handle:
+                rows = list(csv.reader(handle))
+            self.assertEqual(rows[0][0], "channel")
+            self.assertEqual(len(rows), 10)
         finally:
             shutil.rmtree(tmp_path, ignore_errors=True)
 

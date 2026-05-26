@@ -4,13 +4,16 @@ from unittest.mock import patch
 import numpy as np
 import torch
 
+from holo_opt.config import SignalWindowLossConfig
 from holo_opt.field import (
     background_loss,
     channel_energy_balance_loss,
     compute_intensities,
     compute_loss_terms,
+    compute_signal_window_loss_terms,
     fftshift2,
     gray_monotonic_loss,
+    masked_mean,
     normalize_intensities,
     phase_smoothness_loss,
     training_loss,
@@ -65,6 +68,71 @@ class FieldTest(unittest.TestCase):
 
         self.assertAlmostEqual(float(loss.item()), 5.0)
 
+    def test_compute_loss_terms_matches_reconstruction_energy_to_target_energy_for_image_mse(self):
+        phdx = torch.zeros((2, 2), dtype=torch.float32)
+        phdy = torch.zeros((2, 2), dtype=torch.float32)
+        pair_mat = torch.tensor([[1.0, 0.0]], dtype=torch.float32)
+        targets = torch.tensor([[[0.0, 0.0], [1.0, 1.0]]], dtype=torch.float32)
+        intensities = torch.tensor([[[0.0, 2.0], [6.0, 2.0]]], dtype=torch.float32)
+        weights = torch.ones(1, dtype=torch.float32)
+
+        with patch("holo_opt.field.compute_intensities", return_value=intensities):
+            terms = compute_loss_terms(
+                phdx,
+                phdy,
+                pair_mat,
+                targets,
+                weights,
+                {"eta_balance_weight": 0.0, "gray_monotonic_weight": 0.0, "phase_smoothness_weight": 0.0},
+            )
+
+        expected_reconstruction = intensities / intensities.sum(dim=(-2, -1), keepdim=True) * targets.sum()
+        expected_mse = torch.mean((expected_reconstruction - targets) ** 2)
+        self.assertAlmostEqual(float(terms["image_mse"].item()), float(expected_mse.item()))
+
+    def test_masked_mean_uses_only_masked_pixels(self):
+        values = torch.tensor([[1.0, 2.0], [3.0, 4.0]], dtype=torch.float32)
+        mask = torch.tensor([[1.0, 0.0], [1.0, 0.0]], dtype=torch.float32)
+
+        self.assertAlmostEqual(float(masked_mean(values, mask).item()), 2.0)
+
+    def test_signal_window_loss_terms_penalize_bad_signal_region_more_than_good(self):
+        targets = torch.tensor([[[0.0, 0.0], [1.0, 1.0]]], dtype=torch.float32)
+        good = targets.clone()
+        bad = 1.0 - targets
+        masks = {
+            "edge": torch.zeros_like(targets),
+            "signal": targets.clone(),
+            "flat": torch.zeros_like(targets),
+            "dark": 1.0 - targets,
+            "relaxed": torch.zeros_like(targets),
+        }
+        config = SignalWindowLossConfig(image_loss_mode="signal_window")
+
+        good_terms = compute_signal_window_loss_terms(good, targets, good, masks, config)
+        bad_terms = compute_signal_window_loss_terms(bad, targets, bad, masks, config)
+
+        self.assertLess(float(good_terms["signal_window"].item()), float(bad_terms["signal_window"].item()))
+
+    def test_signal_window_dark_leakage_respects_dark_limit(self):
+        targets = torch.zeros((1, 2, 2), dtype=torch.float32)
+        masks = {
+            "edge": torch.zeros_like(targets),
+            "signal": torch.zeros_like(targets),
+            "flat": torch.zeros_like(targets),
+            "dark": torch.ones_like(targets),
+            "relaxed": torch.zeros_like(targets),
+        }
+        config = SignalWindowLossConfig(image_loss_mode="signal_window", dark_limit=0.2)
+        low = torch.full_like(targets, 0.1)
+        high = torch.full_like(targets, 0.5)
+
+        low_terms = compute_signal_window_loss_terms(low, targets, low, masks, config)
+        high_terms = compute_signal_window_loss_terms(high, targets, high, masks, config)
+
+        self.assertEqual(float(low_terms["dark_leakage"].item()), 0.0)
+        self.assertGreater(float(high_terms["dark_leakage"].item()), 0.0)
+
     def test_compute_loss_terms_returns_finite_terms(self):
         phdx = torch.zeros((4, 4), dtype=torch.float32)
         phdy = torch.zeros((4, 4), dtype=torch.float32)
@@ -88,6 +156,50 @@ class FieldTest(unittest.TestCase):
         for value in terms.values():
             self.assertTrue(torch.isfinite(value).item())
             self.assertEqual(value.ndim, 0)
+
+    def test_compute_loss_terms_signal_window_mode_replaces_image_mse_in_total(self):
+        phdx = torch.zeros((2, 2), dtype=torch.float32)
+        phdy = torch.zeros((2, 2), dtype=torch.float32)
+        pair_mat = torch.tensor([[1.0, 0.0]], dtype=torch.float32)
+        targets = torch.tensor([[[0.0, 0.0], [1.0, 1.0]]], dtype=torch.float32)
+        weights = torch.ones(1, dtype=torch.float32)
+        intensities = torch.ones((1, 2, 2), dtype=torch.float32)
+        masks = {
+            "edge": torch.zeros_like(targets),
+            "signal": targets.clone(),
+            "flat": torch.zeros_like(targets),
+            "dark": 1.0 - targets,
+            "relaxed": torch.zeros_like(targets),
+        }
+        config = SignalWindowLossConfig(
+            image_loss_mode="signal_window",
+            signal_weight=1.0,
+            edge_weight=0.0,
+            flat_weight=0.0,
+            relaxed_weight=0.0,
+            dark_weight=0.0,
+        )
+
+        with patch("holo_opt.field.compute_intensities", return_value=intensities):
+            terms = compute_loss_terms(
+                phdx,
+                phdy,
+                pair_mat,
+                targets,
+                weights,
+                {
+                    "image_weight": 1.0,
+                    "eta_balance_weight": 0.0,
+                    "gray_monotonic_weight": 0.0,
+                    "phase_smoothness_weight": 0.0,
+                    "background_weight": 0.0,
+                },
+                region_masks=masks,
+                signal_window_config=config,
+            )
+
+        self.assertIn("signal_window", terms)
+        self.assertAlmostEqual(float(terms["total"].item()), float(terms["signal_window"].item()))
 
     def test_phase_smoothness_zero_for_constant_phase(self):
         phase = torch.ones((4, 4), dtype=torch.float32)

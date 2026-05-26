@@ -48,6 +48,7 @@ class CliTest(unittest.TestCase):
                 "--alpha-deg", "-10",
                 "--weight-alpha", "0.25",
                 "--weight-beta", "0.75",
+                "--selection-metric", "image_error",
             ]
         )
 
@@ -72,6 +73,7 @@ class CliTest(unittest.TestCase):
         self.assertEqual(config.guided_mode.alpha_deg, -10.0)
         self.assertEqual(config.weight_update.alpha, 0.25)
         self.assertEqual(config.weight_update.beta, 0.75)
+        self.assertEqual(config.selection_metric, "image_error")
 
     def test_parser_exposes_loss_weight_options(self):
         args = build_parser().parse_args(
@@ -96,6 +98,71 @@ class CliTest(unittest.TestCase):
         self.assertEqual(config.loss.phase_smoothness_weight, 0.004)
         self.assertEqual(config.loss.background_weight, 0.1)
         self.assertEqual(config.diagnostic_interval, 2)
+
+    def test_parser_exposes_region_mask_options(self):
+        args = build_parser().parse_args(
+            [
+                "--region-mask-enabled",
+                "--region-signal-threshold",
+                "0.08",
+                "--region-dark-threshold",
+                "0.01",
+                "--region-edge-quantile",
+                "0.9",
+                "--region-edge-dilation",
+                "3",
+                "--region-flat-gradient-quantile",
+                "0.4",
+                "--region-min-fraction",
+                "0.01",
+            ]
+        )
+
+        config = config_from_args(args)
+
+        self.assertTrue(config.region_mask.enabled)
+        self.assertEqual(config.region_mask.signal_threshold, 0.08)
+        self.assertEqual(config.region_mask.dark_threshold, 0.01)
+        self.assertEqual(config.region_mask.edge_quantile, 0.9)
+        self.assertEqual(config.region_mask.edge_dilation, 3)
+        self.assertEqual(config.region_mask.flat_gradient_quantile, 0.4)
+        self.assertEqual(config.region_mask.min_region_fraction, 0.01)
+
+    def test_parser_exposes_signal_window_options(self):
+        args = build_parser().parse_args(
+            [
+                "--image-loss-mode",
+                "signal_window",
+                "--signal-window-weight",
+                "0.7",
+                "--edge-weight",
+                "2.5",
+                "--signal-weight",
+                "1.2",
+                "--flat-weight",
+                "0.2",
+                "--relaxed-weight",
+                "0.04",
+                "--dark-weight",
+                "0.3",
+                "--dark-limit",
+                "0.05",
+                "--lowpass-sigma",
+                "1.5",
+            ]
+        )
+
+        config = config_from_args(args)
+
+        self.assertEqual(config.signal_window.image_loss_mode, "signal_window")
+        self.assertEqual(config.signal_window.signal_window_weight, 0.7)
+        self.assertEqual(config.signal_window.edge_weight, 2.5)
+        self.assertEqual(config.signal_window.signal_weight, 1.2)
+        self.assertEqual(config.signal_window.flat_weight, 0.2)
+        self.assertEqual(config.signal_window.relaxed_weight, 0.04)
+        self.assertEqual(config.signal_window.dark_weight, 0.3)
+        self.assertEqual(config.signal_window.dark_limit, 0.05)
+        self.assertEqual(config.signal_window.lowpass_sigma, 1.5)
 
     def test_config_from_args_supports_lineart_target_mode(self):
         args = build_parser().parse_args(

@@ -15,6 +15,7 @@ import numpy as np
 from holo_opt.config import ExperimentConfig, config_to_dict
 from holo_opt.line_targets import GrayscaleTargetArtifacts
 from holo_opt.metrics import normalize_per_channel
+from holo_opt.region_masks import RegionMasks
 
 
 def export_results(
@@ -31,6 +32,7 @@ def export_results(
     loss_terms_history: list[dict[str, float]] | None = None,
     outer_summaries: list[tuple[int, np.ndarray]] | None = None,
     grayscale_artifacts: GrayscaleTargetArtifacts | None = None,
+    region_masks: RegionMasks | None = None,
 ) -> Path:
     """Write one complete experiment folder containing images, tables, and raw arrays."""
     run_dir = create_run_dir(config)
@@ -64,6 +66,9 @@ def export_results(
             grayscale_artifacts.processed_grayscale,
             grayscale_artifacts.stitched_target,
         )
+    if region_masks is not None:
+        _write_rows_csv(run_dir / "region_mask_report.csv", region_masks.report_rows)
+        _plot_region_masks(run_dir / "mask_summary.png", targets, region_masks)
     if diagnostics:
         _write_rows_csv(run_dir / "diagnostics.csv", diagnostics)
     if loss_terms_history:
@@ -187,6 +192,35 @@ def _plot_preprocess_comparison(
         plt.close(fig)
 
 
+def _plot_region_masks(path: Path, targets: np.ndarray, masks: RegionMasks) -> None:
+    target_array = np.asarray(targets, dtype=np.float32)
+    panels = (
+        ("target", target_array),
+        ("edge", masks.edge),
+        ("signal", masks.signal),
+        ("flat", masks.flat),
+        ("dark", masks.dark),
+        ("relaxed", masks.relaxed),
+    )
+    channels = target_array.shape[0]
+    fig, axes = plt.subplots(len(panels), channels, figsize=(max(9.0, channels * 1.3), 8.0), squeeze=False)
+    try:
+        for row_index, (name, values) in enumerate(panels):
+            array = np.asarray(values, dtype=np.float32)
+            for channel in range(channels):
+                axes[row_index, channel].imshow(array[channel], cmap="gray", vmin=0.0, vmax=1.0)
+                if row_index == 0:
+                    axes[row_index, channel].set_title(f"ch {channel + 1}")
+                if channel == 0:
+                    axes[row_index, channel].set_ylabel(name)
+                axes[row_index, channel].set_xticks([])
+                axes[row_index, channel].set_yticks([])
+        fig.tight_layout()
+        fig.savefig(path, dpi=150)
+    finally:
+        plt.close(fig)
+
+
 def _plot_summary(path: Path, targets: np.ndarray, intensities: np.ndarray) -> None:
     target_array = np.asarray(targets)
     reconstruction = normalize_per_channel(intensities)
@@ -264,11 +298,25 @@ def _plot_loss_curve(path: Path, losses: list[float] | np.ndarray) -> None:
 
 
 def _plot_loss_terms(path: Path, loss_terms_history: list[dict[str, float]]) -> None:
-    terms = ("image_mse", "eta_balance", "gray_monotonic", "phase_smoothness", "background")
+    terms = (
+        "image_mse",
+        "signal_window",
+        "edge_mse",
+        "signal_mse",
+        "flat_lowpass_mse",
+        "relaxed_lowpass_mse",
+        "dark_leakage",
+        "eta_balance",
+        "gray_monotonic",
+        "phase_smoothness",
+        "background",
+    )
     steps = np.asarray([row["step"] for row in loss_terms_history], dtype=np.float32)
     fig, ax = plt.subplots(figsize=(7.0, 4.5))
     try:
         for term in terms:
+            if term not in loss_terms_history[0]:
+                continue
             values = np.asarray([row[term] for row in loss_terms_history], dtype=np.float32)
             ax.plot(steps, values, linewidth=1.5, label=term)
         ax.set_xlabel("Step")
